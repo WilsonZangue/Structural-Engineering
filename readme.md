@@ -1,8 +1,25 @@
+
+
 # 🏗️ Daskan Intelligence | Structural Project Effort Estimator
+
+![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
 This project delivers a sophisticated, AI-driven dashboard for predicting the effort (in engineering hours) required for structural projects. Built upon the principles of advanced machine learning and explainability, it addresses the need for accurate resource planning, risk management, and transparent decision-making within engineering firms.
 
 The application is developed using **Streamlit** and employs an **Ensemble Quantile Regression** approach to provide not just a single point estimate, but a **Prediction Interval** crucial for risk assessment and confident quotation.
+
+-----
+
+## 📚 Table of Contents
+
+- [Key Sophistication & Features](#-key-sophistication--features)
+- [Installation and Setup](#️-installation-and-setup)
+- [Usage Guide](#-usage-guide)
+- [Methodology Highlights](#-methodology-highlights)
+- [Support](#support)
+- [License](#license)
+- [Contact](#contact)
 
 -----
 
@@ -24,11 +41,11 @@ This model and application incorporate several advanced techniques suitable for 
 
 To run the application locally, you will need Python 3.8+ and the following packages.
 
-### 1\. Prerequisites
+### 1. Prerequisites
 
 Ensure you have Python installed.
 
-### 2\. Create and Activate Environment
+### 2. Create and Activate Environment
 
 ```bash
 # Create a new virtual environment (recommended)
@@ -40,7 +57,7 @@ python -m venv venv
 source venv/bin/activate
 ```
 
-### 3\. Install Dependencies
+### 3. Install Dependencies
 
 Install all required Python libraries.
 
@@ -48,7 +65,7 @@ Install all required Python libraries.
 pip install streamlit pandas numpy plotly scikit-learn shap matplotlib
 ```
 
-### 4\. Run the Application
+### 4. Run the Application
 
 Save the provided Python code as `app.py` and execute it from your terminal:
 
@@ -67,10 +84,10 @@ The dashboard is organized into four main tabs to facilitate a structured data s
 1. **📊 Deep Dive Analytics:** Explore data distributions, correlations, and feature relationships (`RQ1`).
 2. **🧹 Data Quality Check:** Review missing data report and understand the automated imputation/scaling strategy (`RQ2`).
 3. **🧠 AI Model Engine:** This is the core modeling section (`RQ3`).
-      * **Configure:** Select **Gradient Boosting Regressor** and **Prediction Interval (90% Quantile)** for the most sophisticated results.
-      * **Optimize:** Check **"Perform Hyperparameter Optimization (Slow)"** to execute `RandomizedSearchCV`.
-      * **Train:** Click **"Train Model(s) on Current Data"**.
-      * **Evaluate:** Review performance metrics (R², MAE, **PICP**), Residual Plot, and the **SHAP Summary Plot** for XAI.
+    - **Configure:** Select **Gradient Boosting Regressor** and **Prediction Interval (90% Quantile)** for the most sophisticated results.
+    - **Optimize:** Check **"Perform Hyperparameter Optimization (Slow)"** to execute `RandomizedSearchCV`.
+    - **Train:** Click **"Train Model(s) on Current Data"**.
+    - **Evaluate:** Review performance metrics (R², MAE, **PICP**), Residual Plot, and the **SHAP Summary Plot** for XAI.
 4. **💼 Decision Support System:** Input new project parameters to get real-time effort predictions, including the critical 90% confidence range, and assess workforce planning (`RQ4`).
 
 -----
@@ -81,8 +98,22 @@ The most advanced and thesis-relevant methodology is the use of **Gradient Boost
 
 The application trains three distinct GBR models:
 
-  **Q05 (5th Percentile):** The lower bound of the prediction interval.
-  **Q50 (50th Percentile / Median):** The best single point estimate (used for central prediction and overall evaluation).
-  **Q95 (95th Percentile):** The upper bound of the prediction interval, representing the worst-case, risk-managed effort.
+- **Q05 (5th Percentile):** The lower bound of the prediction interval.
+- **Q50 (50th Percentile / Median):** The best single point estimate (used for central prediction and overall evaluation).
+- **Q95 (95th Percentile):** The upper bound of the prediction interval, representing the worst-case, risk-managed effort.
 
 This approach provides a statistically rigorous framework for uncertainty quantification, directly translating machine learning output into actionable business intelligence for project managers.
+
+-----
+
+## 🛠️ Support
+
+If you encounter any issues or have questions, please open an [issue](https://github.com/WilsonZangue/Structural-Engineering/issues) on GitHub.
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+## 📬 Contact
+
+For questions, suggestions, or collaboration, contact [Wilson Zangue](https://github.com/WilsonZangue) via GitHub.
