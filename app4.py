@@ -23,7 +23,7 @@ from scipy.stats import randint, uniform
 DASKAN_GREEN = "#049449" 
 DASKAN_COLOR_PALETTE = ['#049449', '#004c29', '#1abc9c', '#3498db', '#9b59b6']
 AVG_HOURLY_RATE_CAD = 115
-HOURS_PER_WEEK = 30 # For a single engineer
+HOURS_PER_WEEK = 40 # For a single engineer
 
 st.set_page_config(
     page_title="Daskan Intelligence | AI Project Estimator - PRO",
