@@ -4,7 +4,7 @@ import random
 from datetime import datetime, timedelta
 
 # Set random seed for reproducibility
-np.random.seed(42)
+np.random.seed(87)
 
 def generate_synthetic_data(num_projects=87):
     print("Generating Daskan Inc. Synthetic Data...")
@@ -16,7 +16,7 @@ def generate_synthetic_data(num_projects=87):
     projects = []
     
     for i in range(num_projects):
-        p_id = f"P-2024-{str(i+1).zfill(3)}"
+        p_id = f"P-2022-{str(i+1).zfill(3)}"
         p_type = np.random.choice(project_types, p=[0.25, 0.35, 0.15, 0.25]) # 25% Residential
         
         # Logic: Commercial/Industrial are usually larger
