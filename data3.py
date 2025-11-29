@@ -9,30 +9,57 @@ np.random.seed(87)
 def generate_synthetic_data(num_projects=87):
     """
     Generates synthetic construction project data and timesheet logs.
-    It produces three CSV files: metadata, raw logs, and a master project summary.
-    
-    MODIFIED: Project IDs now correlate with start year, and dates span 2022-2024.
+    The FINAL training data CSV includes ALL requested Project-Level and 
+    Log-Level features by aggregating and then joining back to the raw logs.
     """
-    print("👷 Generating Daskan Inc. Synthetic Data with Multi-Year Dates...")
+    print("👷 Generating Daskan Inc. FULL ExplorationData (All Features)...")
     
-    # --- 1. PROJECT METADATA & DURATION LOGIC ---
+    # --- 1. PROJECT METADATA, DURATION LOGIC, AND TASK MAPPING ---
     project_types = ['Residential', 'Commercial', 'Institutional', 'Industrial']
     materials = ['Wood', 'Steel', 'Concrete', 'Mixed']
+    
+    # Define task probability weights based on Project Type
+    task_weights = {
+        'Residential':     {'Design': 0.30, 'Calculation': 0.10, 'Drafting': 0.40, 'Meeting': 0.10, 'Site Visit': 0.10},
+        'Commercial':      {'Design': 0.25, 'Calculation': 0.20, 'Drafting': 0.30, 'Meeting': 0.15, 'Site Visit': 0.10},
+        'Institutional':   {'Design': 0.20, 'Calculation': 0.30, 'Drafting': 0.20, 'Meeting': 0.20, 'Site Visit': 0.10},
+        'Industrial':      {'Design': 0.15, 'Calculation': 0.35, 'Drafting': 0.15, 'Meeting': 0.25, 'Site Visit': 0.10},
+    }
+    task_categories = list(task_weights['Residential'].keys())
+
+    # Define Subtasks for each Main Task Category
+    subtask_map = {
+        'Design': [
+            'Architectural Layout', 'Structural Concept', 'MEP System Planning', 
+            'Facade/Exterior Detailing', 'Material Specification Review'
+        ],
+        'Calculation': [
+            'Structural Analysis (Beam/Column Sizing)', 'Load Calculations (Wind/Seismic)', 
+            'Energy Modeling', 'Cost Estimation Review', 'Permit Fee Calculation'
+        ],
+        'Drafting': [
+            'Foundation Plan Updates', 'Section Drawings', 'Detail Sheet Generation', 
+            'Markup Cleanup', '3D Model Adjustments'
+        ],
+        'Meeting': [
+            'Client Design Review', 'Subcontractor Coordination', 'Internal Team Sync', 
+            'Permitting Authority Review', 'BIM Clash Detection Session'
+        ],
+        'Site Visit': [
+            'Existing Conditions Survey', 'Progress Inspection', 'Quality Check (QA/QC)', 
+            'RFI Clarification', 'Punch List Generation'
+        ]
+    }
     
     projects = []
     project_effort_map = {} 
     
-    # Dictionary to keep track of project count per year for sequential ID generation
     project_counter = {2022: 0, 2023: 0, 2024: 0} 
-    
-    # Generate a list of start years and sort them so project IDs are sequential by year
     start_years = np.random.choice([2022, 2023, 2024], size=num_projects, p=[0.3, 0.4, 0.3])
     
-    # We will iterate based on the start year list to ensure distribution
     for start_year in start_years:
         
         # 1.1 Determine Start Date
-        # Start months are randomized for each year
         start_month = np.random.randint(1, 13) 
         start_date = datetime(start_year, start_month, 1) + timedelta(days=np.random.randint(0, 28))
         
@@ -40,7 +67,7 @@ def generate_synthetic_data(num_projects=87):
         project_counter[start_year] += 1
         p_id = f"P-{start_year}-{str(project_counter[start_year]).zfill(3)}"
         
-        # 1.3 Determine Physical Size & Complexity (Same logic as before)
+        # 1.3 Determine Physical Size & Complexity
         p_type = np.random.choice(project_types, p=[0.25, 0.35, 0.15, 0.25])
         
         if p_type == 'Residential':
@@ -92,7 +119,7 @@ def generate_synthetic_data(num_projects=87):
             'building_height_m': round(height, 2),
             'num_revisions': num_revisions,
             'revision_reason': revision_reason,
-            'planned_start_date': start_date, # Now linked to the new start year logic
+            'planned_start_date': start_date, 
             'planned_end_date': planned_end_date,
             'expected_duration_days': expected_duration_days,
             'scope_category': scope_cat
@@ -100,63 +127,87 @@ def generate_synthetic_data(num_projects=87):
         
     df_projects_metadata = pd.DataFrame(projects)
     
-    # --- 2. TIMESHEETS (Detailed Logs) ---
+    # --- 2. TIMESHEETS (Detailed Logs with Subtasks) ---
     timesheet_entries = []
     log_id_counter = 1
     
     for _, proj in df_projects_metadata.iterrows():
         p_id = proj['project_id']
+        p_type = proj['project_type']
+        
         total_hours = project_effort_map[p_id]
         
-        # Simulate final hours differing from estimate (Actual vs Planned)
         actual_total_hours = total_hours * np.random.normal(1.05, 0.1) 
         actual_total_hours = max(10, actual_total_hours)
         
         num_entries = np.random.randint(int(actual_total_hours/5), int(actual_total_hours/0.5)) 
-        avg_entry_hours = actual_total_hours / num_entries
         
         start_dt_planned = proj['planned_start_date']
-        
-        # Simulate project completion taking longer/shorter than planned duration
         actual_duration_days = int(proj['expected_duration_days'] * np.random.normal(1.1, 0.1))
-        
-        # Actual end date used for log generation
         actual_end_dt = start_dt_planned + timedelta(days=actual_duration_days)
         date_range_days = (actual_end_dt - start_dt_planned).days
         
-        for _ in range(num_entries):
-            # Hours worked for this entry
-            hours = round(np.random.normal(avg_entry_hours, 1.5), 2)
-            if hours <= 0.25: hours = 0.5
+        # Structured Task Logic
+        target_task_hours = {
+            task: actual_total_hours * task_weights[p_type][task] 
+            for task in task_categories
+        }
+        
+        total_logs_for_project = 0
+        logs_per_task = {}
+        for task, target_hours in target_task_hours.items():
+            num_logs = max(1, int(target_hours / np.random.normal(2.5, 0.5)))
+            logs_per_task[task] = num_logs
+            total_logs_for_project += num_logs
+
+        final_logs_per_task = {}
+        if total_logs_for_project > 0:
+            for task, logs in logs_per_task.items():
+                final_logs_per_task[task] = int(logs / total_logs_for_project * num_entries)
+        
+        logs_difference = num_entries - sum(final_logs_per_task.values())
+        if logs_difference > 0:
+            highest_task = max(final_logs_per_task, key=final_logs_per_task.get)
+            final_logs_per_task[highest_task] += logs_difference
+
+        # 4. Generate the log entries
+        for task, num_logs in final_logs_per_task.items():
             
-            # Log Date within Project Window
-            random_days = np.random.randint(0, max(1, date_range_days))
-            log_date = start_dt_planned + timedelta(days=random_days)
+            if logs_per_task.get(task, 0) > 0:
+                 avg_task_hours = target_task_hours.get(task, 0) / logs_per_task[task]
+            else:
+                 avg_task_hours = 2.0 
             
-            # Task categories
-            task = np.random.choice(['Design', 'Calculation', 'Drafting', 'Meeting', 'Site Visit'])
-            
-            timesheet_entries.append({
-                'log_id': log_id_counter,
-                'project_id': p_id,
-                'employee_id': f"EMP-{np.random.randint(1, 12)}", 
-                'date_logged': log_date,
-                'task_category': task,
-                'hours_worked': hours
-            })
-            log_id_counter += 1
+            for _ in range(num_logs):
+                hours = round(np.random.normal(avg_task_hours, 1.0), 2)
+                if hours <= 0.25: hours = 0.5
+                
+                random_days = np.random.randint(0, max(1, date_range_days))
+                log_date = start_dt_planned + timedelta(days=random_days)
+                
+                subtask = np.random.choice(subtask_map[task])
+                
+                timesheet_entries.append({
+                    'log_id': log_id_counter,
+                    'project_id': p_id,
+                    'employee_id': f"EMP-{np.random.randint(1, 12)}", 
+                    'date_logged': log_date,
+                    'task_category': task, 
+                    'subtask_description': subtask, 
+                    'hours_worked': hours
+                })
+                log_id_counter += 1
             
     df_timesheets = pd.DataFrame(timesheet_entries)
     
-    # --- 3. CREATE PROJECT SUMMARY DATASET (Feature Engineering) ---
+    # --- 3. AGGREGATE PROJECT-LEVEL METRICS FROM TIMESHEETS ---
     
-    # Create the base merged dataframe
-    df_master_raw = pd.merge(df_timesheets, df_projects_metadata, on='project_id', how='left')
-    df_master_raw['date_logged'] = pd.to_datetime(df_master_raw['date_logged'])
+    # Convert date_logged to datetime for calculation
+    df_timesheets['date_logged'] = pd.to_datetime(df_timesheets['date_logged'])
     
-    # --- A. Aggregation Step ---
-    df_summary = df_master_raw.groupby('project_id').agg(
-        # Duration & Dates
+    # 3.1 Calculate all project-level metrics requested by the user
+    df_project_metrics = df_timesheets.groupby('project_id').agg(
+        # Duration & Dates (Requested Variables)
         corrected_start_date=('date_logged', 'min'),
         corrected_end_date=('date_logged', 'max'),
         total_project_hours=('hours_worked', 'sum'),
@@ -164,26 +215,19 @@ def generate_synthetic_data(num_projects=87):
         # Employee Metrics
         num_employees=('employee_id', 'nunique'),
         
-        # Task Metrics
-        design_hours_total=('hours_worked', lambda x: x[df_master_raw.loc[x.index, 'task_category'] == 'Design'].sum()),
+        # Task Metrics (Requested Variables)
+        design_hours_total=('hours_worked', lambda x: x[df_timesheets.loc[x.index, 'task_category'] == 'Design'].sum()),
         num_site_visits=('task_category', lambda x: (x == 'Site Visit').sum())
     ).reset_index()
 
-    # Merge aggregated data back with metadata
-    df_master = pd.merge(df_projects_metadata, df_summary, on='project_id', how='left')
-
-    # --- B. Feature Calculation Step ---
-
-    # 1. Duration and Ratio Calculations
-    df_master['project_duration_days'] = (df_master['corrected_end_date'] - df_master['corrected_start_date']).dt.days
-    df_master['actual_duration_days'] = (df_master['corrected_end_date'] - df_master['corrected_start_date']).dt.days # Actual measured duration
+    # 3.2 Calculate Duration and Employee Averages
+    df_project_metrics['project_duration_days'] = (df_project_metrics['corrected_end_date'] - df_project_metrics['corrected_start_date']).dt.days
+    df_project_metrics['actual_duration_days'] = df_project_metrics['project_duration_days'] # Using actual for raw duration
+    df_project_metrics['avg_hours_per_employee'] = df_project_metrics['total_project_hours'] / df_project_metrics['num_employees']
     
-    # 2. Geometry
-    df_master['floor_area_ratio'] = df_master['surface_area_m2'] / df_master['num_levels']
-
-    # 3. Time/Date Features
-    df_master['month_started'] = df_master['corrected_start_date'].dt.month
-    df_master['quarter'] = df_master['corrected_start_date'].dt.quarter
+    # 3.3 Time-based features extracted from the corrected start date
+    df_project_metrics['month_started'] = df_project_metrics['corrected_start_date'].dt.month
+    df_project_metrics['quarter'] = df_project_metrics['corrected_start_date'].dt.quarter
     
     def get_season_flag(month):
         if month in [12, 1, 2]: return 'Winter'
@@ -191,92 +235,84 @@ def generate_synthetic_data(num_projects=87):
         if month in [6, 7, 8]: return 'Summer'
         return 'Autumn'
         
-    df_master['season_flag'] = df_master['corrected_start_date'].dt.month.apply(get_season_flag)
+    df_project_metrics['season_flag'] = df_project_metrics['corrected_start_date'].dt.month.apply(get_season_flag)
     
-    # Check for holiday overlap between start and end dates (Nov 15 - Jan 15)
     def check_holiday_overlap(start, end):
-        holiday_start = datetime(start.year, 11, 15)
-        holiday_end = datetime(start.year + 1, 1, 15) if start.month >= 11 else datetime(start.year, 1, 15)
-        
-        # Adjust holiday_start to previous year if project starts in Jan/Feb
-        if start.month in [1, 2] and holiday_start.year == start.year:
-            holiday_start = datetime(start.year - 1, 11, 15)
-            
-        return int((start <= holiday_end) and (end >= holiday_start))
+        # Checks if project spans the Nov 15th to Jan 15th holiday window
+        span_start = datetime(start.year, 11, 15)
+        span_end = datetime(start.year + 1, 1, 15) 
+        if (start < span_end) and (end > span_start):
+            return 1
+        span_start_prev = datetime(start.year - 1, 11, 15)
+        span_end_prev = datetime(start.year, 1, 15)
+        if (start < span_end_prev) and (end > span_start_prev):
+             return 1
+        return 0
 
-    df_master['holiday_period_flag'] = df_master.apply(
+    df_project_metrics['holiday_period_flag'] = df_project_metrics.apply(
         lambda row: check_holiday_overlap(row['corrected_start_date'], row['corrected_end_date']), axis=1
     )
 
-    # 4. Employee/Effort Features
-    df_master['avg_hours_per_employee'] = df_master['total_project_hours'] / df_master['num_employees']
+
+    # --- 4. CREATE FULL GRANULAR TRAINING DATASET (Final Merge) ---
     
+    # 4.1 Join Project Metadata (V1) to Project Metrics (V2)
+    df_context = pd.merge(df_projects_metadata, df_project_metrics, on='project_id', how='left')
     
+    # 4.2 Calculate Floor Area Ratio (Planned Metric)
+    df_context['floor_area_ratio'] = df_context['surface_area_m2'] / df_context['num_levels']
+    
+    # 4.3 Final Merge: Join Timesheets (Left) with the full Project Context (Right)
+    # This results in the final dataset where every row is a log entry + all context.
+    df_full_training = pd.merge(df_timesheets, df_context, on='project_id', how='left')
+    
+    # 4.4 Calculate Log-Level Supporting Variables
+    df_full_training['is_winter_day'] = df_full_training['date_logged'].dt.month.isin([12, 1, 2, 3]).astype(int)
+    # 'week' as supporting variable: week number of the year
+    df_full_training['week'] = df_full_training['date_logged'].dt.isocalendar().week.astype(int)
+
     # --- C. Final Clean-up and Save ---
     
-    # Format Dates for CSV
-    df_master['corrected_start_date'] = df_master['corrected_start_date'].dt.strftime('%Y-%m-%d')
-    df_master['corrected_end_date'] = df_master['corrected_end_date'].dt.strftime('%Y-%m-%d')
-    df_master['planned_start_date'] = df_master['planned_start_date'].dt.strftime('%Y-%m-%d')
-    df_master['planned_end_date'] = df_master['planned_end_date'].dt.strftime('%Y-%m-%d')
+    # Convert all datetime objects to string format for CSV
+    for col in df_full_training.columns:
+        if df_full_training[col].dtype == 'datetime64[ns]':
+            df_full_training[col] = df_full_training[col].dt.strftime('%Y-%m-%d')
     
-    # Select and reorder columns for the final training set
+    # Define the final column order based on the requested variables
     final_cols = [
-        'project_id',
-        'project_type',
-        'material_type',
-        'scope_category',
+        # Log-Level Metrics
+        'log_id', 'project_id', 'employee_id', 
+        'date_logged', 'task_category', 'subtask_description', 'hours_worked',
+        'week', 'is_winter_day', 
+
+        # Project Metadata (Planned/Static)
+        'project_type', 'material_type', 'scope_category', 
+        'surface_area_m2', 'num_levels', 'num_units', 'building_height_m', 
+        'floor_area_ratio', 
         
-        'surface_area_m2',
-        'num_levels',
-        'num_units',
-        'building_height_m',
-        'floor_area_ratio',
+        # Planned Duration
+        'planned_start_date', 'planned_end_date', 'expected_duration_days',
         
-        'planned_start_date',
-        'planned_end_date',
-        'expected_duration_days',
-        
-        'corrected_start_date',
-        'corrected_end_date',
-        'project_duration_days',
-        'actual_duration_days', 
-        
-        'month_started',
-        'quarter',
-        'season_flag',
-        'holiday_period_flag',
-        
-        'total_project_hours',
-        'design_hours_total',
-        'num_site_visits',
-        'num_revisions',
-        'revision_reason',
-        
-        'num_employees',
+        # Actual/Calculated Metrics (Joined from Aggregation)
+        'corrected_start_date', 'corrected_end_date', 
+        'project_duration_days', 'actual_duration_days', # Both derived from corrected dates
+        'month_started', 'quarter', 'season_flag', 'holiday_period_flag',
+        'total_project_hours', 'design_hours_total', 'num_site_visits', 
+        'num_revisions', 'revision_reason',
         'avg_hours_per_employee',
     ]
 
-    final_cols = [col for col in final_cols if col in df_master.columns]
-    df_final_training = df_master[final_cols]
+    final_cols = [col for col in final_cols if col in df_full_training.columns]
+    df_final_training = df_full_training[final_cols]
     
-    # Save the raw timesheets with cleaned dates for the supporting data
-    df_timesheets['date_logged'] = df_timesheets['date_logged'].dt.strftime('%Y-%m-%d')
-
-    print(f"\nGenerated {len(df_final_training)} projects.")
-    print(f"Generated {len(df_timesheets)} granular timesheet logs.")
-    print(f"Master Project Summary Shape: {df_final_training.shape}")
+    print(f"\nGenerated {len(df_final_training)} full log entries.")
+    print(f"Full Training Data Shape: {df_final_training.shape}")
     
     # Save to CSV
-    # Using 'v3' suffix to denote this latest, multi-year, ID-correlated version
-    df_projects_metadata.to_csv('daskan_projects_metadata_v3.csv', index=False)
-    df_timesheets.to_csv('daskan_timesheets_raw_v3.csv', index=False)
-    df_final_training.to_csv('daskan_project_exploration_data_v3.csv', index=False)
+    df_final_training.to_csv('daskan_full_exploration_data_complete.csv', index=False)
     
-    print("\nFiles saved:")
-    print("1. 'daskan_projects_metadata_v3.csv' (Initial Planned Info)")
-    print("2. 'daskan_timesheets_raw_v3.csv' (Granular Logs)")
-    print("3. 'daskan_project_exploration_data_v3.csv' (The Project Exploration Dataset)")
+    print("\nFile saved:")
+    print("1. 'daskan_full_exploration_data_complete.csv' (Contains ALL 26 requested variables per log entry)")
 
 # Run the generator
 generate_synthetic_data()
