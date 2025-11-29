@@ -10,8 +10,10 @@ def generate_synthetic_data(num_projects=87):
     """
     Generates synthetic construction project data and timesheet logs.
     It produces three CSV files: metadata, raw logs, and a master project summary.
+    
+    MODIFIED: Project IDs now correlate with start year, and dates span 2022-2024.
     """
-    print("👷 Generating Daskan Inc. Synthetic Data...")
+    print("👷 Generating Daskan Inc. Synthetic Data with Multi-Year Dates...")
     
     # --- 1. PROJECT METADATA & DURATION LOGIC ---
     project_types = ['Residential', 'Commercial', 'Institutional', 'Industrial']
@@ -20,11 +22,27 @@ def generate_synthetic_data(num_projects=87):
     projects = []
     project_effort_map = {} 
     
-    for i in range(num_projects):
-        p_id = f"P-2022-{str(i+1).zfill(3)}"
+    # Dictionary to keep track of project count per year for sequential ID generation
+    project_counter = {2022: 0, 2023: 0, 2024: 0} 
+    
+    # Generate a list of start years and sort them so project IDs are sequential by year
+    start_years = np.random.choice([2022, 2023, 2024], size=num_projects, p=[0.3, 0.4, 0.3])
+    
+    # We will iterate based on the start year list to ensure distribution
+    for start_year in start_years:
+        
+        # 1.1 Determine Start Date
+        # Start months are randomized for each year
+        start_month = np.random.randint(1, 13) 
+        start_date = datetime(start_year, start_month, 1) + timedelta(days=np.random.randint(0, 28))
+        
+        # 1.2 Generate Project ID based on Year and Sequence
+        project_counter[start_year] += 1
+        p_id = f"P-{start_year}-{str(project_counter[start_year]).zfill(3)}"
+        
+        # 1.3 Determine Physical Size & Complexity (Same logic as before)
         p_type = np.random.choice(project_types, p=[0.25, 0.35, 0.15, 0.25])
         
-        # 1.1 Determine Physical Size & Complexity
         if p_type == 'Residential':
             area = np.random.randint(100, 600)
             levels = np.random.randint(1, 4)
@@ -44,11 +62,7 @@ def generate_synthetic_data(num_projects=87):
             height = levels * np.random.normal(4.5, 0.7)
             scope_cat = 'Complex Infrastructure'
             
-        # 1.2 Determine Planned Dates
-        start_month = np.random.randint(1, 12) 
-        planned_start_date = datetime(2022, start_month, 1) + timedelta(days=np.random.randint(0, 28))
-        
-        # 1.3 Calculate Target Effort (Hours)
+        # 1.4 Calculate Target Effort (Hours)
         base_effort = (area * 0.1) + (levels * 20)
         if p_type in ['Institutional', 'Industrial']:
             base_effort *= 1.5
@@ -57,18 +71,16 @@ def generate_synthetic_data(num_projects=87):
         total_hours_est = max(10, total_hours_est)
         project_effort_map[p_id] = total_hours_est
         
-        # 1.4 Calculate Planned End Date
+        # 1.5 Calculate Planned End Date
         estimated_weeks = max(1, total_hours_est / 30) 
-        expected_duration_days = int(estimated_weeks * 7) + np.random.randint(5, 20) # Add buffer
-        planned_end_date = planned_start_date + timedelta(days=expected_duration_days)
+        expected_duration_days = int(estimated_weeks * 7) + np.random.randint(5, 20)
+        planned_end_date = start_date + timedelta(days=expected_duration_days)
 
-        # 1.5 Revision Data (New Features)
-        num_revisions = np.random.poisson(1.5) # Average 1.5 revisions
+        # 1.6 Revision Data
+        num_revisions = np.random.poisson(1.5) 
+        revision_reason = 'None'
         if num_revisions > 0:
-            revision_reason = np.random.choice(['Client Change', 'Code Conflict', 'Scope Creep', 'Site Condition'], 
-                                               p=[0.4, 0.3, 0.2, 0.1])
-        else:
-            revision_reason = 'None'
+            revision_reason = np.random.choice(['Client Change', 'Code Conflict', 'Scope Creep', 'Site Condition'])
 
         projects.append({
             'project_id': p_id,
@@ -76,12 +88,11 @@ def generate_synthetic_data(num_projects=87):
             'material_type': np.random.choice(materials),
             'surface_area_m2': area,
             'num_levels': levels,
-            # New variables
             'num_units': num_units,
             'building_height_m': round(height, 2),
             'num_revisions': num_revisions,
             'revision_reason': revision_reason,
-            'planned_start_date': planned_start_date, 
+            'planned_start_date': start_date, # Now linked to the new start year logic
             'planned_end_date': planned_end_date,
             'expected_duration_days': expected_duration_days,
             'scope_category': scope_cat
@@ -98,16 +109,15 @@ def generate_synthetic_data(num_projects=87):
         total_hours = project_effort_map[p_id]
         
         # Simulate final hours differing from estimate (Actual vs Planned)
-        actual_total_hours = total_hours * np.random.normal(1.05, 0.1) # Actual effort ~5% more
+        actual_total_hours = total_hours * np.random.normal(1.05, 0.1) 
         actual_total_hours = max(10, actual_total_hours)
         
         num_entries = np.random.randint(int(actual_total_hours/5), int(actual_total_hours/0.5)) 
         avg_entry_hours = actual_total_hours / num_entries
         
         start_dt_planned = proj['planned_start_date']
-        end_dt_planned = proj['planned_end_date']
         
-        # Simulate project completion taking a bit longer/shorter than planned duration
+        # Simulate project completion taking longer/shorter than planned duration
         actual_duration_days = int(proj['expected_duration_days'] * np.random.normal(1.1, 0.1))
         
         # Actual end date used for log generation
@@ -129,7 +139,7 @@ def generate_synthetic_data(num_projects=87):
             timesheet_entries.append({
                 'log_id': log_id_counter,
                 'project_id': p_id,
-                'employee_id': f"EMP-{np.random.randint(1, 12)}", # 12 Employees
+                'employee_id': f"EMP-{np.random.randint(1, 12)}", 
                 'date_logged': log_date,
                 'task_category': task,
                 'hours_worked': hours
@@ -166,7 +176,7 @@ def generate_synthetic_data(num_projects=87):
 
     # 1. Duration and Ratio Calculations
     df_master['project_duration_days'] = (df_master['corrected_end_date'] - df_master['corrected_start_date']).dt.days
-    df_master['actual_duration_days'] = (df_master['planned_end_date'] - df_master['planned_start_date']).dt.days # This uses the *planned* duration logic for consistency in this synthetic dataset
+    df_master['actual_duration_days'] = (df_master['corrected_end_date'] - df_master['corrected_start_date']).dt.days # Actual measured duration
     
     # 2. Geometry
     df_master['floor_area_ratio'] = df_master['surface_area_m2'] / df_master['num_levels']
@@ -175,7 +185,6 @@ def generate_synthetic_data(num_projects=87):
     df_master['month_started'] = df_master['corrected_start_date'].dt.month
     df_master['quarter'] = df_master['corrected_start_date'].dt.quarter
     
-    # Simple Season/Holiday Flags
     def get_season_flag(month):
         if month in [12, 1, 2]: return 'Winter'
         if month in [3, 4, 5]: return 'Spring'
@@ -184,24 +193,23 @@ def generate_synthetic_data(num_projects=87):
         
     df_master['season_flag'] = df_master['corrected_start_date'].dt.month.apply(get_season_flag)
     
-    # Simple Holiday Overlap Check (e.g., if project spans Thanksgiving/Christmas/New Year)
-    # Checks if corrected_start_date is before Nov 15th and corrected_end_date is after Jan 15th
-    holiday_overlap_check = lambda start, end: (
-        (start.month < 12 and end.month >= 12) or 
-        (start.month == 12) or
-        (end.month == 1) or
-        (start < datetime(2022, 12, 20) and end > datetime(2023, 1, 5))
-    )
+    # Check for holiday overlap between start and end dates (Nov 15 - Jan 15)
+    def check_holiday_overlap(start, end):
+        holiday_start = datetime(start.year, 11, 15)
+        holiday_end = datetime(start.year + 1, 1, 15) if start.month >= 11 else datetime(start.year, 1, 15)
+        
+        # Adjust holiday_start to previous year if project starts in Jan/Feb
+        if start.month in [1, 2] and holiday_start.year == start.year:
+            holiday_start = datetime(start.year - 1, 11, 15)
+            
+        return int((start <= holiday_end) and (end >= holiday_start))
+
     df_master['holiday_period_flag'] = df_master.apply(
-        lambda row: int(holiday_overlap_check(row['corrected_start_date'], row['corrected_end_date'])), axis=1
+        lambda row: check_holiday_overlap(row['corrected_start_date'], row['corrected_end_date']), axis=1
     )
 
     # 4. Employee/Effort Features
     df_master['avg_hours_per_employee'] = df_master['total_project_hours'] / df_master['num_employees']
-    
-    # 5. Supporting Variables (for training data, but might not be explicitly in the final output table)
-    # The actual master table is project-level, so these log-level supporting variables are better kept in the raw log file.
-    # The 'is_winter' column generated in the original code is already a log-level feature.
     
     
     # --- C. Final Clean-up and Save ---
@@ -232,7 +240,7 @@ def generate_synthetic_data(num_projects=87):
         'corrected_start_date',
         'corrected_end_date',
         'project_duration_days',
-        'actual_duration_days', # Renamed from original for clarity
+        'actual_duration_days', 
         
         'month_started',
         'quarter',
@@ -249,11 +257,10 @@ def generate_synthetic_data(num_projects=87):
         'avg_hours_per_employee',
     ]
 
-    # Handle missing columns if any project had no logs (shouldn't happen here)
     final_cols = [col for col in final_cols if col in df_master.columns]
     df_final_training = df_master[final_cols]
     
-    # Also save the raw timesheets with cleaned dates for the supporting data
+    # Save the raw timesheets with cleaned dates for the supporting data
     df_timesheets['date_logged'] = df_timesheets['date_logged'].dt.strftime('%Y-%m-%d')
 
     print(f"\nGenerated {len(df_final_training)} projects.")
@@ -261,14 +268,15 @@ def generate_synthetic_data(num_projects=87):
     print(f"Master Project Summary Shape: {df_final_training.shape}")
     
     # Save to CSV
-    df_projects_metadata.to_csv('daskan_projects_metadata_v2.csv', index=False)
-    df_timesheets.to_csv('daskan_timesheets_raw_v2.csv', index=False)
-    df_final_training.to_csv('daskan_project_summary_training_data_v2.csv', index=False)
+    # Using 'v3' suffix to denote this latest, multi-year, ID-correlated version
+    df_projects_metadata.to_csv('daskan_projects_metadata_v3.csv', index=False)
+    df_timesheets.to_csv('daskan_timesheets_raw_v3.csv', index=False)
+    df_final_training.to_csv('daskan_project_exploration_data_v3.csv', index=False)
     
     print("\nFiles saved:")
-    print("1. 'daskan_projects_metadata_v2.csv' (Initial Planned Info)")
-    print("2. 'daskan_timesheets_raw_v2.csv' (Granular Logs - now log-level supporting data)")
-    print("3. 'daskan_project_exploration_data_v2.csv' (The Project-Level Summary Set)")
+    print("1. 'daskan_projects_metadata_v3.csv' (Initial Planned Info)")
+    print("2. 'daskan_timesheets_raw_v3.csv' (Granular Logs)")
+    print("3. 'daskan_project_exploration_data_v3.csv' (The Project Exploration Dataset)")
 
 # Run the generator
 generate_synthetic_data()
