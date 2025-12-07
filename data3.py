@@ -3,9 +3,9 @@
 daskan_synth_generator.py
 Optimized synthetic data generator for Daskan (project + timesheets).
 Produces three CSVs:
- - daskan_full_exploration_data_v13.csv
- - daskan_projects_metadata_v13.csv
- - daskan_timesheets_raw_v13.csv
+ - daskan_full_exploration_data_v15.csv
+ - daskan_projects_metadata_v15.csv
+ - daskan_timesheets_raw_v15.csv
 """
 
 from __future__ import annotations
@@ -226,13 +226,6 @@ def generate_synthetic_data(num_projects:int=NUM_PROJECTS,
     timesheet_rows: List[Dict] = []
     next_log_id = 1
 
-    # Precompute task-weight arrays for vectorized access
-    for proj in projects:
-        pid = proj.project_id
-        ptype = proj.project_type
-        est_total = int(np.round(total_hours_est[int(pid.split('-')[1]) - min(YEARS)])) if False else None
-        # above line is intentionally not used (keeps mapping simple) -> instead map via dictionary index
-        # build project_effort_map for consistency
     # Build project_effort_map
     project_effort_map = {p.project_id: int(np.maximum(10, np.round(((p.surface_area_m2 * 0.1) + (p.num_levels * 20.0)) * (1.5 if p.project_type in ['Institutional','Industrial'] else 1.0)))) for p in projects}
 
@@ -338,6 +331,7 @@ def generate_synthetic_data(num_projects:int=NUM_PROJECTS,
     # 4) merge context + create df_full_training
     df_context = df_projects_metadata.merge(agg, on='project_id', how='left')
     df_context['floor_area_ratio'] = df_context['surface_area_m2'] / df_context['num_levels'].replace(0, np.nan)
+    df_context['is_winter_day'] = df_context['month_started'].isin([12, 1, 2]).astype(int)
     df_full_training = df_timesheets.merge(df_context, on='project_id', how='left')
 
     # add final log-level columns
@@ -351,7 +345,7 @@ def generate_synthetic_data(num_projects:int=NUM_PROJECTS,
         'project_id', 'employee_id', 'date_logged', 'task_category', 'subtask_description', 'hours_worked',
         'week', 'is_winter_day',
         # Project Metadata (Static)
-        'project_type', 'material_type', 'scope_category', 'surface_area_m2', 'num_levels', 'num_units', 'building_height_m',
+        'project_type', 'material_type', 'scope_category', 'surface_area_m2', 'num_levels', 'num_units', 'building_height_m', 
         'engineer_assigned', 'project_notes', 'floor_area_ratio',
         # Planned Duration
         'planned_start_date', 'planned_end_date', 'expected_duration_days',
@@ -371,12 +365,12 @@ def generate_synthetic_data(num_projects:int=NUM_PROJECTS,
     # ensure out_dir
     os.makedirs(out_dir, exist_ok=True)
 
-    csv1 = os.path.join(out_dir, f"{csv_prefix}_full_exploration_data_v13.csv")
-    csv2 = os.path.join(out_dir, f"{csv_prefix}_projects_metadata_v13.csv")
-    csv3 = os.path.join(out_dir, f"{csv_prefix}_timesheets_raw_v13.csv")
+    csv1 = os.path.join(out_dir, f"{csv_prefix}_full_exploration_data_v15.csv")
+    csv2 = os.path.join(out_dir, f"{csv_prefix}_projects_metadata_v15.csv")
+    csv3 = os.path.join(out_dir, f"{csv_prefix}_timesheets_raw_v15.csv")
 
     if save_csv:
-        # full training - pick columns that exist and fill missing columns if necessary
+        # 1. Full Exploration Data - pick columns that exist and fill missing columns if necessary
         df_export_full = df_full_training.copy()
         # ensure all final_cols_order exist:
         for c in final_cols_order:
@@ -386,20 +380,26 @@ def generate_synthetic_data(num_projects:int=NUM_PROJECTS,
         df_export_full = format_dates_for_export(df_export_full, ['date_logged','planned_start_date','planned_end_date','corrected_start_date','corrected_end_date'])
         df_export_full.to_csv(csv1, index=False)
 
-        # projects metadata
-        metadata_cols = ['project_id', 'project_type', 'material_type', 'surface_area_m2', 'num_levels',
-                         'num_units', 'building_height_m', 'planned_start_date', 'planned_end_date',
-                         'scope_category', 'project_notes', 'engineer_assigned', 'num_revisions',
-                         'revision_reason']
-        df_projects_metadata_export = df_projects_metadata.copy()
+        # 2. Project Metadata Export (Comprehensive project-level data, excluding notes)
+        metadata_cols = [
+            'project_id','is_winter_day','project_type','material_type','scope_category','surface_area_m2',
+            'num_levels','num_units','building_height_m','floor_area_ratio', # project_notes removed
+            'planned_start_date','planned_end_date','expected_duration_days','corrected_start_date',
+            'corrected_end_date','num_site_visits','project_duration_days','actual_duration_days',
+            'month_started','quarter','season_flag','holiday_period_flag','total_project_hours',
+            'design_hours_total','avg_hours_per_employee'
+        ]
+        # Use df_context (which has all merged metrics) as the source
+        df_projects_metadata_export = df_context.copy()
         for c in metadata_cols:
             if c not in df_projects_metadata_export.columns:
                 df_projects_metadata_export[c] = np.nan
         df_projects_metadata_export = df_projects_metadata_export[metadata_cols]
-        df_projects_metadata_export = format_dates_for_export(df_projects_metadata_export, ['planned_start_date','planned_end_date'])
+        date_cols = ['planned_start_date','planned_end_date', 'corrected_start_date', 'corrected_end_date']
+        df_projects_metadata_export = format_dates_for_export(df_projects_metadata_export, date_cols)
         df_projects_metadata_export.to_csv(csv2, index=False)
 
-        # raw timesheets
+        # 3. Raw Timesheets Export
         raw_cols = ['log_id','project_id','employee_id','date_logged','task_category','subtask_description','hours_worked']
         df_timesheets_export = df_timesheets.copy()
         for c in raw_cols:
@@ -408,8 +408,9 @@ def generate_synthetic_data(num_projects:int=NUM_PROJECTS,
         df_timesheets_export = df_timesheets_export[raw_cols]
         df_timesheets_export = format_dates_for_export(df_timesheets_export, ['date_logged'])
         df_timesheets_export.to_csv(csv3, index=False)
-
+        
         logger.info("Saved CSVs: %s, %s, %s", csv1, csv2, csv3)
+        logger.info("Note: projects_metadata_v15.csv now contains aggregated metrics, excluding project notes.")
 
     return {
         "df_full_training": df_full_training,
