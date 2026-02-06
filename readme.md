@@ -1,4 +1,4 @@
-# Daskan Intelligence | AI Project Estimator - PRO
+# Daskan Intelligence | Project Estimator
 
 A Streamlit dashboard for synthetic data generation, project analytics, machine learning model training, explainability, and smart project quotation for construction/engineering projects.
 
@@ -338,3 +338,4 @@ For questions, bug reports, or feature requests, please contact the project main
 ---
 
 *Built with Streamlit, scikit-learn, SHAP, and Plotly for enterprise engineering project estimation and resource planning.*
+
