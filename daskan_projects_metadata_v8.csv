@@ -1,0 +1,88 @@
+project_id,project_type,material_type,surface_area_m2,num_levels,num_units,building_height_m,num_revisions,revision_reason,planned_start_date,planned_end_date,expected_duration_days,scope_category
+P-2024-001,Commercial,Mixed,1859,4,1,13.64,1,Foundation Design Revision,2024-12-12,2025-02-23,73,New Build - Mid Density
+P-2024-002,Industrial,Wood,3582,3,1,12.12,2,Value Engineering Request,2024-02-01,2024-07-17,167,Complex Infrastructure
+P-2023-001,Commercial,Wood,1318,3,1,14.45,6,Accessibility Standard Update,2023-08-24,2023-10-21,58,Tenant Improvement
+P-2024-003,Institutional,Steel,1301,3,1,12.06,2,Accessibility Standard Update,2024-06-06,2024-08-08,63,Complex Infrastructure
+P-2023-002,Industrial,Concrete,4649,11,1,50.79,3,Structural Detail Revision,2023-05-24,2024-02-15,267,Complex Infrastructure
+P-2022-001,Commercial,Steel,1889,7,1,30.69,2,Field Adjustment Needed,2022-10-15,2023-01-07,84,Tenant Improvement
+P-2023-003,Commercial,Mixed,930,2,1,9.6,1,Stakeholder Requirement Change,2023-10-25,2023-12-12,48,New Build - Mid Density
+P-2024-004,Residential,Wood,428,3,1,9.69,2,Procurement Delay,2024-09-28,2024-11-02,35,New Build - Low Density
+P-2023-004,Residential,Wood,160,2,7,7.17,3,Permit Review Comments,2023-06-10,2023-07-09,29,New Build - Low Density
+P-2022-002,Commercial,Concrete,1941,7,1,27.02,0,None,2022-10-12,2023-01-06,86,New Build - Mid Density
+P-2022-003,Residential,Steel,358,1,3,3.43,3,Specification Clarification,2022-11-24,2022-12-17,23,New Build - Low Density
+P-2022-004,Industrial,Wood,3642,3,1,15.87,1,Access or Logistics Constraint,2022-02-20,2022-08-11,172,Complex Infrastructure
+P-2024-005,Industrial,Concrete,2518,10,1,50.74,0,None,2024-05-12,2024-12-07,209,Complex Infrastructure
+P-2024-006,Commercial,Mixed,1517,3,1,13.81,2,RFI Response Integration,2024-01-17,2024-03-07,50,Tenant Improvement
+P-2023-005,Commercial,Concrete,1665,7,1,19.72,1,Stakeholder Requirement Change,2023-04-08,2023-07-17,100,New Build - Mid Density
+P-2023-006,Industrial,Concrete,3318,3,1,11.01,1,Stakeholder Requirement Change,2023-09-02,2024-01-13,133,Complex Infrastructure
+P-2023-007,Industrial,Mixed,2680,13,1,50.66,1,Material Lead Time Issue,2023-09-02,2024-04-14,225,Complex Infrastructure
+P-2022-005,Industrial,Steel,4070,13,1,57.49,1,MEP Coordination Revision,2022-08-09,2023-03-07,210,Complex Infrastructure
+P-2024-007,Institutional,Steel,1120,3,1,14.45,2,Fire Protection Requirement Change,2024-12-22,2025-02-10,50,Complex Infrastructure
+P-2024-008,Residential,Mixed,431,3,6,10.96,2,Groundwater Issue,2024-07-18,2024-08-17,30,New Build - Low Density
+P-2023-008,Industrial,Wood,3623,13,1,64.41,2,Architectural Change,2023-01-06,2023-08-23,229,Complex Infrastructure
+P-2022-006,Residential,Mixed,463,1,6,3.05,0,None,2022-01-06,2022-02-04,29,New Build - Low Density
+P-2023-009,Commercial,Wood,1663,7,1,24.26,2,Clash Detection Issue,2023-11-18,2024-02-11,85,New Build - Mid Density
+P-2023-010,Residential,Wood,480,3,5,9.56,6,Foundation Design Revision,2023-05-09,2023-06-16,38,New Build - Low Density
+P-2023-011,Industrial,Concrete,3711,10,1,49.7,1,Weather-Related Adjustment,2023-09-17,2024-04-27,223,Complex Infrastructure
+P-2024-009,Industrial,Steel,4410,11,1,48.02,0,None,2024-02-25,2024-12-02,281,Complex Infrastructure
+P-2023-012,Institutional,Concrete,2503,12,1,49.04,2,Foundation Design Revision,2023-05-08,2023-12-02,208,Complex Infrastructure
+P-2024-010,Commercial,Mixed,1057,6,1,23.01,2,Access or Logistics Constraint,2024-08-02,2024-09-18,47,New Build - Mid Density
+P-2024-011,Residential,Steel,472,1,3,2.93,1,Clash Detection Issue,2024-01-28,2024-02-19,22,New Build - Low Density
+P-2022-007,Commercial,Concrete,717,3,1,13.56,4,MEP Coordination Revision,2022-07-08,2022-08-19,42,Tenant Improvement
+P-2024-012,Commercial,Mixed,1259,3,1,12.96,1,MEP Coordination Revision,2024-01-08,2024-03-04,56,New Build - Mid Density
+P-2023-013,Commercial,Wood,938,2,1,7.42,2,Survey Data Update,2023-12-22,2024-02-04,44,Tenant Improvement
+P-2024-013,Commercial,Mixed,1732,6,1,24.39,0,None,2024-07-15,2024-10-01,78,New Build - Mid Density
+P-2024-014,Commercial,Wood,1063,3,1,13.47,1,Specification Clarification,2024-09-04,2024-10-28,54,New Build - Mid Density
+P-2023-014,Commercial,Concrete,643,3,1,8.77,2,Material Lead Time Issue,2023-01-01,2023-02-04,34,Tenant Improvement
+P-2023-015,Industrial,Wood,1773,10,1,43.26,1,Fire Protection Requirement Change,2023-11-08,2024-03-16,129,Complex Infrastructure
+P-2023-016,Industrial,Steel,1541,6,1,28.2,3,Procurement Delay,2023-04-21,2023-08-03,104,Complex Infrastructure
+P-2024-015,Residential,Steel,483,2,1,5.94,1,Utility Conflict,2024-08-12,2024-09-01,20,New Build - Low Density
+P-2023-017,Commercial,Wood,1384,6,1,21.68,1,Vendor/Manufacturer Change,2023-02-26,2023-05-07,70,New Build - Mid Density
+P-2022-008,Industrial,Wood,2746,12,1,70.6,0,None,2022-07-16,2023-02-24,223,Complex Infrastructure
+P-2024-016,Residential,Steel,557,3,1,9.2,2,Contractor Request,2024-09-16,2024-10-19,33,New Build - Low Density
+P-2023-018,Residential,Concrete,592,1,6,3.32,3,MEP Coordination Revision,2023-01-21,2023-02-23,33,New Build - Low Density
+P-2022-009,Commercial,Wood,716,7,1,26.43,4,Material Lead Time Issue,2022-09-24,2022-11-26,63,New Build - Mid Density
+P-2023-019,Industrial,Wood,2549,3,1,11.87,2,Architectural Change,2023-02-20,2023-07-06,136,Complex Infrastructure
+P-2024-017,Commercial,Concrete,1068,4,1,13.38,3,Scope Creep,2024-12-24,2025-02-11,49,Tenant Improvement
+P-2022-010,Commercial,Steel,1815,4,1,13.78,1,Permit Review Comments,2022-08-07,2022-10-16,70,New Build - Mid Density
+P-2024-018,Residential,Steel,250,3,9,9.26,2,Value Engineering Request,2024-07-05,2024-08-07,33,New Build - Low Density
+P-2024-019,Industrial,Mixed,1764,3,1,17.92,1,Clash Detection Issue,2024-04-23,2024-07-24,92,Complex Infrastructure
+P-2024-020,Residential,Mixed,222,1,4,3.37,1,Contractor Request,2024-12-25,2025-01-18,24,New Build - Low Density
+P-2023-020,Residential,Concrete,507,1,7,3.43,1,Material Lead Time Issue,2023-12-20,2024-01-20,31,New Build - Low Density
+P-2023-021,Commercial,Mixed,1353,7,1,31.7,0,None,2023-03-19,2023-06-03,76,New Build - Mid Density
+P-2024-021,Residential,Steel,417,2,2,6.84,2,Permit Review Comments,2024-11-01,2024-12-01,30,New Build - Low Density
+P-2023-022,Institutional,Wood,3770,4,1,13.59,1,Stakeholder Requirement Change,2023-10-02,2024-03-11,161,Complex Infrastructure
+P-2022-011,Industrial,Mixed,3685,4,1,20.14,1,Foundation Design Revision,2022-02-12,2022-08-11,180,Complex Infrastructure
+P-2023-023,Residential,Mixed,217,2,7,5.76,2,Procurement Delay,2023-02-02,2023-02-26,24,New Build - Low Density
+P-2023-024,Commercial,Steel,525,5,1,19.29,1,End-User Requirement Update,2023-09-02,2023-10-26,54,New Build - Mid Density
+P-2023-025,Commercial,Wood,724,6,1,23.39,3,End-User Requirement Update,2023-03-01,2023-04-27,57,Tenant Improvement
+P-2023-026,Industrial,Steel,2941,5,1,21.92,1,Late Client Information,2023-02-18,2023-07-10,142,Complex Infrastructure
+P-2023-027,Commercial,Steel,1232,3,1,11.27,1,Value Engineering Request,2023-12-25,2024-02-17,54,Tenant Improvement
+P-2024-022,Residential,Concrete,252,3,6,10.59,3,Drawing Correction,2024-04-18,2024-05-11,23,New Build - Low Density
+P-2022-012,Residential,Wood,371,2,7,6.6,1,RFI Response Integration,2022-03-21,2022-04-20,30,New Build - Low Density
+P-2024-023,Industrial,Wood,4482,8,1,39.31,2,MEP Coordination Revision,2024-11-07,2025-06-01,206,Complex Infrastructure
+P-2023-028,Residential,Wood,432,1,1,3.17,1,Groundwater Issue,2023-04-18,2023-05-17,29,New Build - Low Density
+P-2024-024,Industrial,Steel,4836,10,1,42.91,1,Clash Detection Issue,2024-09-15,2025-07-07,295,Complex Infrastructure
+P-2023-029,Institutional,Concrete,4770,12,1,41.64,0,None,2023-05-14,2024-01-29,260,Complex Infrastructure
+P-2023-030,Residential,Wood,579,2,8,7.28,1,Procurement Delay,2023-10-11,2023-11-11,31,New Build - Low Density
+P-2023-031,Institutional,Steel,3223,3,1,12.32,0,None,2023-07-03,2023-12-17,167,Complex Infrastructure
+P-2022-013,Residential,Mixed,176,2,5,7.28,0,None,2022-04-19,2022-05-11,22,New Build - Low Density
+P-2024-025,Industrial,Mixed,2010,12,1,68.3,2,Design Error Correction,2024-06-05,2024-11-07,155,Complex Infrastructure
+P-2022-014,Residential,Wood,492,1,2,3.47,1,Permit Review Comments,2022-01-14,2022-02-10,27,New Build - Low Density
+P-2023-032,Commercial,Wood,847,6,1,26.68,1,Code Conflict,2023-08-27,2023-11-07,72,New Build - Mid Density
+P-2024-026,Industrial,Wood,4927,12,1,59.97,0,None,2024-08-09,2025-05-05,269,Complex Infrastructure
+P-2022-015,Institutional,Steel,2336,2,1,8.69,0,None,2022-09-21,2023-01-07,108,Complex Infrastructure
+P-2024-027,Commercial,Steel,897,2,1,8.98,3,MEP Coordination Revision,2024-12-11,2025-01-23,43,Tenant Improvement
+P-2023-033,Commercial,Steel,1409,3,1,13.4,0,None,2023-07-20,2023-09-14,56,Tenant Improvement
+P-2022-016,Residential,Concrete,436,2,5,6.53,0,None,2022-09-28,2022-11-03,36,New Build - Low Density
+P-2022-017,Residential,Steel,427,3,3,7.96,2,Site Condition,2022-12-20,2023-01-16,27,New Build - Low Density
+P-2022-018,Institutional,Steel,3889,3,1,11.97,2,Field Adjustment Needed,2022-09-24,2023-03-03,160,Complex Infrastructure
+P-2023-034,Industrial,Wood,3230,9,1,47.06,3,Design Optimization,2023-06-05,2023-12-19,197,Complex Infrastructure
+P-2023-035,Industrial,Concrete,3165,11,1,58.24,1,Scope Creep,2023-07-03,2023-12-15,165,Complex Infrastructure
+P-2024-028,Residential,Concrete,199,2,6,7.42,1,Structural Detail Revision,2024-01-10,2024-02-09,30,New Build - Low Density
+P-2023-036,Industrial,Concrete,2973,5,1,20.1,3,Groundwater Issue,2023-09-06,2024-01-26,142,Complex Infrastructure
+P-2022-019,Commercial,Mixed,1809,7,1,23.01,0,None,2022-04-19,2022-06-30,72,New Build - Mid Density
+P-2022-020,Industrial,Concrete,1447,10,1,53.69,1,Structural Detail Revision,2022-01-21,2022-05-21,120,Complex Infrastructure
+P-2023-037,Commercial,Steel,1584,6,1,20.72,0,None,2023-01-23,2023-04-11,78,New Build - Mid Density
+P-2023-038,Industrial,Mixed,3955,14,1,55.32,2,End-User Requirement Update,2023-09-27,2024-06-03,250,Complex Infrastructure
+P-2024-029,Commercial,Concrete,1351,6,1,19.8,2,Access or Logistics Constraint,2024-09-15,2024-11-26,72,Tenant Improvement
