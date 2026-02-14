@@ -16,7 +16,7 @@ At a high level, it answers:
 The app is organized into 6 Streamlit tabs:
 1. Deep Dive Analytics
 2. AI Model Engine (regression training/tuning/deployment gate)
-3. Model Explainability (SHAP/ALE)
+3. Model Explainability (SHAP)
 4. Classification (Low/Medium/High complexity)
 5. Smart Quotation (pricing/risk/resource planning)
 6. Clustering & Personas (K-Means + PCA)
@@ -43,7 +43,6 @@ The app is organized into 6 Streamlit tabs:
 - `modules/explainability.py`
   - Cached SHAP calculations
   - SHAP interaction values (tree models)
-  - Custom 1D ALE implementation
 
 - `modules/diagnostics.py`
   - Leakage detection rules
@@ -278,12 +277,6 @@ From `get_shap_interaction_data()`:
 - Computes pairwise interaction strengths
 - Lists and charts strongest feature pairs
 
-### ALE (Accumulated Local Effects)
-From `get_ale_data()`:
-- Custom 1D ALE implementation (quantile bins)
-- Used as a correlation-safe alternative to SHAP dependence for numeric features
-- Skips one-hot categorical feature names
-
 ### Classic SHAP plots
 - Matplotlib SHAP summary
 - SHAP waterfall for a selected example row
@@ -443,7 +436,6 @@ This enables tab-to-tab continuity without retraining every interaction.
 ### Explainability
 - SHAP (global, dependence, interactions, waterfall)
 - Permutation Importance
-- ALE (custom implementation)
 
 ### Unsupervised Learning
 - K-Means clustering
@@ -463,7 +455,6 @@ This enables tab-to-tab continuity without retraining every interaction.
 - **R²**: variance explained on test data. The app treats 0.70 as a production-quality gate.
 - **Permutation importance**: performance drop when a feature is shuffled (model dependence proxy).
 - **SHAP**: signed contribution of each transformed feature per prediction.
-- **ALE**: local effect estimate that is more robust under correlated features.
 - **Silhouette score**: how separated clusters are (higher is generally better).
 
 ---
