@@ -123,6 +123,10 @@ Behavior:
 - `floor_area_ratio`
 - `actual_duration_days`
 - `num_revisions`
+- `area_per_unit` (engineered interaction)
+- `height_per_level` (engineered interaction)
+- `complexity_interaction_index` (engineered interaction)
+- `revision_intensity` (engineered interaction)
 
 ### Primary categorical features
 - `project_type`
@@ -136,6 +140,11 @@ Depending on available columns:
 - `avg_floor_height` (if levels-height correlation is strong)
 - Ordinal date features from planned/corrected dates
 - `complexity_index` (rule-based numeric complexity proxy)
+- Additional interaction features engineered in `app5.py`:
+- `area_per_unit = surface_area_m2 / (num_units + 1)`
+- `height_per_level = building_height_m / (num_levels + 1)`
+- `complexity_interaction_index = surface_area_m2 * num_levels`
+- `revision_intensity = num_revisions / (actual_duration_days + 1)`
 
 ### Rule-based complexity class
 `project_complexity_class` is generated when missing, using:
@@ -179,12 +188,13 @@ This preprocessing is packaged with estimators in sklearn `Pipeline` objects.
 
 ### Build-time defaults (data-size aware)
 `build_model()` adapts defaults for small vs larger data (`n_rows < 500`).
+For small datasets, tree models are now intentionally constrained (shallower trees and larger leaf/split sizes) to reduce overfitting risk.
 
 ### Hyperparameter tuning
 `train_and_tune_model()` uses:
 - `RandomizedSearchCV`
 - CV strategy: `KFold(shuffle=True, random_state=42)`
-- Scoring objective: `neg_mean_absolute_error`
+- Scoring objective: `r2` (aligned with deployment KPI and approval gate)
 - Iterations/folds adjusted by dataset size
 
 Parameter spaces include:
