@@ -484,6 +484,41 @@ Then upload either:
 
 ---
 
+## Best Practices for Splitting Data in ML (Implemented)
+Your app now applies split best practices directly in code:
+
+1. Randomized split with target stratification (regression)
+- Default split mode is **Auto (Stratified Random)**.
+- For regression, the target (`total_project_hours`) is binned into quantiles and used as a stratification signal when possible.
+- If stratification is not feasible (small/degenerate samples), it safely falls back to random splitting.
+
+2. Group-aware split support
+- You can select **Group-Aware (project_id)** in the sidebar.
+- If repeated `project_id` values exist, the app uses `GroupShuffleSplit` so the same project group is not split across train and test.
+- If grouping is not feasible, it falls back safely and reports the fallback mode.
+
+3. Time-aware split support
+- You can select **Time-Aware (Chronological)** in the sidebar.
+- If a start-date column is present (`planned_start_date`, `corrected_start_date`, or `start_date`), the app trains on earlier rows and tests on the most recent rows.
+- If no valid time column exists, it falls back safely and reports the fallback mode.
+
+4. Class-balanced split for classification
+- The classification tab now uses stratified train/test splitting on `project_complexity_class` to preserve class ratios.
+
+5. Cross-validation best-practice updates
+- Regression tuning now uses stratified-fold behavior when possible (binned target), with KFold fallback.
+- Classification tuning now uses `StratifiedKFold` for better class-balance preservation in CV.
+
+6. Leakage-conscious workflow
+- Splitting occurs before model fitting.
+- Preprocessing (imputation/scaling/encoding) is fit inside sklearn pipelines, so transforms are learned from train folds only.
+- Leakage guard remains available for post-outcome feature exclusion.
+
+7. Test-set hygiene
+- The model evaluation path keeps test data isolated for final metrics and diagnostics.
+
+---
+
 ## Current Design Assumptions and Limitations
 - The production gate is based on a single R² threshold (`0.70`), not full governance.
 - Drift detection uses simple mean/std boundaries (2 sigma), not advanced drift tests.
@@ -495,5 +530,3 @@ Then upload either:
 
 ## Why This Codebase Is Valuable
 This codebase is a strong applied ML decision-support tool: it combines data validation, model training/tuning, interpretability, deployment gating, cost estimation, and operational planning in one coherent Streamlit workflow. It is not just a model demo; it is an end-to-end estimation system designed for real project decision contexts.
-
-
