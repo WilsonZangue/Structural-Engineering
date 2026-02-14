@@ -1,4 +1,4 @@
-# Synthetic Data Generator - Structural Project Intelligence Dashboard
+#Daskan - Structural Project Intelligence Dashboard
 
 ## What This Project Is
 This repository contains a **Streamlit-based machine learning application** for structural engineering project intelligence. The main app (`app5.py`) ingests project datasets, performs analytics, trains predictive models, explains model behavior, classifies project complexity, generates quotations, and identifies project personas through clustering.
@@ -495,3 +495,4 @@ Then upload either:
 
 ## Why This Codebase Is Valuable
 This codebase is a strong applied ML decision-support tool: it combines data validation, model training/tuning, interpretability, deployment gating, cost estimation, and operational planning in one coherent Streamlit workflow. It is not just a model demo; it is an end-to-end estimation system designed for real project decision contexts.
+
