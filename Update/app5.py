@@ -997,6 +997,71 @@ with tabs[1]:
         show_cols = [c for c in show_cols if c in outliers.columns]
         st.dataframe(outliers[show_cols], use_container_width=True, hide_index=True)
 
+        if not outliers.empty:
+            st.markdown("#### Top Outlier Deviation Box Plots")
+            st.caption("Each plot compares one outlier's feature values (red markers) against the overall feature distributions (box plots).")
+            features_for_box = [c for c in selected_num_features if c in df_modeling.columns]
+            if not features_for_box:
+                st.info("No numeric training features available for outlier deviation plots.")
+            else:
+                max_outlier_plots = min(10, len(outliers))
+                outlier_plot_count = st.slider(
+                    "Number of top outliers to visualize",
+                    min_value=1,
+                    max_value=max_outlier_plots,
+                    value=min(3, max_outlier_plots),
+                    key="outlier_boxplot_count"
+                )
+                outliers_to_plot = outliers.head(outlier_plot_count)
+                plot_cols = st.columns(2)
+
+                for i, (out_idx, out_row) in enumerate(outliers_to_plot.iterrows()):
+                    with plot_cols[i % 2]:
+                        fig_out = go.Figure()
+                        for feat in features_for_box:
+                            vals = pd.to_numeric(df_modeling[feat], errors='coerce').dropna()
+                            if vals.empty:
+                                continue
+                            fig_out.add_trace(go.Box(
+                                x=[feat] * len(vals),
+                                y=vals,
+                                name=feat,
+                                boxpoints=False,
+                                marker_color="rgba(130,130,130,0.55)",
+                                line_color="rgba(100,100,100,0.8)",
+                                showlegend=False
+                            ))
+
+                        scatter_x = []
+                        scatter_y = []
+                        for feat in features_for_box:
+                            val = pd.to_numeric(pd.Series([out_row.get(feat, np.nan)]), errors='coerce').iloc[0]
+                            if pd.notna(val):
+                                scatter_x.append(feat)
+                                scatter_y.append(val)
+                        if scatter_x:
+                            fig_out.add_trace(go.Scatter(
+                                x=scatter_x,
+                                y=scatter_y,
+                                mode="markers",
+                                marker=dict(color="#d62728", size=10, line=dict(color="white", width=0.8)),
+                                name="Outlier value"
+                            ))
+
+                        out_id = str(out_row.get('project_id', out_idx))
+                        out_abs_error = float(out_row.get('abs_error', np.nan))
+                        fig_out.update_layout(
+                            template="plotly_white",
+                            title=f"Outlier: {out_id} | Abs Error: {out_abs_error:.1f}h",
+                            xaxis_title="Feature",
+                            yaxis_title="Value",
+                            xaxis_tickangle=-45,
+                            margin=dict(l=30, r=20, t=60, b=90),
+                            height=450,
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0)
+                        )
+                        st.plotly_chart(fig_out, use_container_width=True, key=f"outlier_boxplot_{i}_{out_id}")
+
     st.markdown("---")
     st.subheader("Model Card Export")
     if st.session_state.get('last_train_metrics'):
