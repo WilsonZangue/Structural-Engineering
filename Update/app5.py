@@ -122,6 +122,8 @@ if 'models' not in st.session_state:
     st.session_state['last_baseline_mae'] = None
     st.session_state['clf_metrics'] = None
     st.session_state['clf_confusion_matrix'] = None
+    st.session_state['tuning_history'] = []
+    st.session_state['tuning_attempt_counter'] = 0
 if 'target_col' in st.session_state:
     del st.session_state['target_col']
 
@@ -653,6 +655,44 @@ with tabs[0]:
 # ----------------------------------------------------------------------
 with tabs[1]:
     st.header("Effort Estimation Models")
+    r2_threshold = 0.7
+
+    def _append_tuning_history(
+        trigger,
+        model_name,
+        split_used,
+        cv_score,
+        test_r2_val,
+        test_mae_val,
+        train_rows_used,
+        test_rows_used,
+        cv_fold_used,
+        outliers_removed=0,
+        seed_used=42,
+        n_iter_scale_used=1.0
+    ):
+        attempt = int(st.session_state.get('tuning_attempt_counter', 0)) + 1
+        st.session_state['tuning_attempt_counter'] = attempt
+        row = {
+            "attempt": attempt,
+            "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "trigger": trigger,
+            "model": model_name,
+            "split_mode": split_used,
+            "train_rows": int(train_rows_used),
+            "test_rows": int(test_rows_used),
+            "cv_folds": int(cv_fold_used),
+            "cv_r2_best_or_mean": float(cv_score),
+            "test_r2": float(test_r2_val),
+            "test_mae": float(test_mae_val),
+            "outliers_removed": int(outliers_removed),
+            "seed": int(seed_used),
+            "n_iter_scale": float(n_iter_scale_used),
+            "threshold_passed": bool(test_r2_val >= r2_threshold),
+        }
+        hist = st.session_state.get('tuning_history', [])
+        hist.append(row)
+        st.session_state['tuning_history'] = hist
     
     # Training readiness checks
     train_issues = []
@@ -761,6 +801,17 @@ with tabs[1]:
             st.caption(f"Using `{split_mode_used}` split strategy.")
         # Auto-select CV folds for training diagnostics
         cv_folds = 5 if len(df_modeling) < 500 else 7
+        total_split_rows = max(1, len(X_train) + len(X_test))
+        train_ratio = len(X_train) / total_split_rows
+        test_ratio = len(X_test) / total_split_rows
+
+        st.markdown("#### Split & Validation Setup")
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Train Split", f"{train_ratio:.0%}", f"{len(X_train)} rows")
+        s2.metric("Test Split", f"{test_ratio:.0%}", f"{len(X_test)} rows")
+        s3.metric("Validation Method", "Cross-Validation", f"{cv_folds} folds")
+        s4.metric("Split Strategy", split_mode_used.replace("_", " ").title())
+        st.caption("Validation is performed using cross-validation on the training split; no fixed validation holdout is used.")
     
     with col_m1:
         st.subheader("Configuration")
@@ -820,7 +871,9 @@ with tabs[1]:
                     tuned_model, performance_metric = train_and_tune_model(
                         X_train_use, y_train_use, model_choice,
                         selected_num_features, CAT_FEATURES, use_log_target,
-                        sample_weight=None
+                        sample_weight=None,
+                        random_state=42,
+                        n_iter_scale=1.0
                     )
                     st.session_state['models'] = tuned_model
                     st.session_state['mode'] = 'point'
@@ -870,7 +923,7 @@ with tabs[1]:
                         pass
 
                     # R2 threshold gate (engineering estimation reliability)
-                    if r2_test < 0.70:
+                    if r2_test < r2_threshold:
                         st.warning("R2 below 0.70. Model may be unreliable for engineering estimation.")
                     st.session_state['last_train_metrics'] = {
                         "model": model_choice,
@@ -880,6 +933,20 @@ with tabs[1]:
                         "features": ", ".join(selected_features)
                     }
                     st.session_state['last_train_features'] = selected_features
+                    _append_tuning_history(
+                        trigger="initial_train",
+                        model_name=model_choice,
+                        split_used=split_mode_used,
+                        cv_score=performance_metric,
+                        test_r2_val=r2_test,
+                        test_mae_val=mae_test,
+                        train_rows_used=len(X_train_use),
+                        test_rows_used=len(X_test),
+                        cv_fold_used=cv_folds,
+                        outliers_removed=(len(X_train) - len(X_train_use)),
+                        seed_used=42,
+                        n_iter_scale_used=1.0
+                    )
                     
                     # CV summary for selected model
                     try:
@@ -1313,7 +1380,6 @@ with tabs[1]:
         st.subheader("Model Deployment Management (MLOps Simulation)")
         
         current_r2 = st.session_state['train_r2']
-        r2_threshold = 0.7 # Production quality threshold
         
         if current_r2 > r2_threshold:
             model_status = "Ready for Production"
@@ -1336,6 +1402,131 @@ with tabs[1]:
             st.info(f"**Live Production Model:** Version {st.session_state['approved_model_version']} (Trained on R2: {st.session_state['approved_r2']:.3f})")
         else:
             st.warning("No model is currently approved for production use.")
+
+        st.markdown("---")
+        st.subheader("Iterative Retuning and History")
+        history_df = pd.DataFrame(st.session_state.get('tuning_history', []))
+        if history_df.empty:
+            st.info("No tuning attempts recorded yet.")
+        else:
+            display_cols = [
+                "attempt", "timestamp_utc", "trigger", "model", "split_mode",
+                "train_rows", "test_rows", "cv_folds", "cv_r2_best_or_mean",
+                "test_r2", "test_mae", "outliers_removed", "seed", "n_iter_scale",
+                "threshold_passed"
+            ]
+            display_cols = [c for c in display_cols if c in history_df.columns]
+            st.dataframe(
+                history_df[display_cols].sort_values("attempt", ascending=False),
+                use_container_width=True,
+                hide_index=True
+            )
+
+        col_hist_1, col_hist_2 = st.columns([2, 1])
+        if col_hist_2.button("Clear Tuning History", key="clear_tuning_history"):
+            st.session_state['tuning_history'] = []
+            st.session_state['tuning_attempt_counter'] = 0
+            st.success("Tuning history cleared.")
+
+        if current_r2 < r2_threshold and not train_blocked:
+            st.caption("Model is below threshold. Run additional tuning attempts and track each result.")
+            col_rt_1, col_rt_2, col_rt_3 = st.columns([1.2, 1.2, 1.4])
+            retune_iter_scale = col_rt_1.slider(
+                "Retune Search Intensity",
+                min_value=1.0,
+                max_value=3.0,
+                value=1.0,
+                step=0.25,
+                key="retune_iter_scale",
+                help="Scales randomized-search iteration budget for tunable models."
+            )
+            retune_resplit = col_rt_2.checkbox(
+                "Reshuffle Train/Test Split",
+                value=True,
+                key="retune_resplit",
+                help="Uses a new split seed for each retune attempt."
+            )
+            retune_outlier = col_rt_3.checkbox(
+                "Apply Outlier Removal in Retune",
+                value=remove_outliers,
+                key="retune_use_outlier"
+            )
+
+            if st.button("Run Additional Tuning Attempt", key="retune_attempt_btn", type="secondary"):
+                try:
+                    st.session_state['quote_generated'] = False
+                    retune_seed = int(st.session_state.get('tuning_attempt_counter', 0)) + 43
+                    split_seed = retune_seed if retune_resplit else 42
+
+                    # Rebuild split for retune attempt
+                    sample_weight_rt = np.where(y > y.quantile(0.75), 1.5, 1.0)
+                    X_train_rt, X_test_rt, y_train_rt, y_test_rt, w_train_rt, _, split_mode_rt = split_regression_best_practice(
+                        X, y, sample_weight=sample_weight_rt, split_mode=requested_split_mode, test_size=0.2, random_state=split_seed
+                    )
+
+                    X_train_use_rt, y_train_use_rt = X_train_rt, y_train_rt
+                    removed_outliers_rt = 0
+                    if retune_outlier:
+                        base_model_rt, _ = train_and_tune_model(
+                            X_train_rt, y_train_rt, model_choice,
+                            selected_num_features, CAT_FEATURES, use_log_target,
+                            sample_weight=w_train_rt,
+                            random_state=retune_seed,
+                            n_iter_scale=retune_iter_scale
+                        )
+                        resid_rt = (y_train_rt - base_model_rt.predict(X_train_rt)).abs()
+                        drop_idx_rt = resid_rt.sort_values(ascending=False).head(outlier_count).index
+                        X_train_use_rt = X_train_rt.drop(index=drop_idx_rt)
+                        y_train_use_rt = y_train_rt.drop(index=drop_idx_rt)
+                        removed_outliers_rt = int(len(drop_idx_rt))
+
+                    tuned_model_rt, cv_score_rt = train_and_tune_model(
+                        X_train_use_rt, y_train_use_rt, model_choice,
+                        selected_num_features, CAT_FEATURES, use_log_target,
+                        sample_weight=None,
+                        random_state=retune_seed,
+                        n_iter_scale=retune_iter_scale
+                    )
+                    preds_rt = tuned_model_rt.predict(X_test_rt)
+                    mae_rt = mean_absolute_error(y_test_rt, preds_rt)
+                    r2_rt = r2_score(y_test_rt, preds_rt)
+
+                    # Update active model/session outputs
+                    st.session_state['models'] = tuned_model_rt
+                    st.session_state['mode'] = 'point'
+                    st.session_state['train_r2'] = float(r2_rt)
+                    st.session_state['y_test'] = y_test_rt
+                    st.session_state['y_preds'] = preds_rt
+                    st.session_state['last_train_metrics'] = {
+                        "model": model_choice,
+                        "mae": float(mae_rt),
+                        "r2": float(r2_rt),
+                        "rows": int(len(X_train_rt) + len(X_test_rt)),
+                        "features": ", ".join(selected_features)
+                    }
+                    st.session_state['last_train_features'] = selected_features
+
+                    _append_tuning_history(
+                        trigger="retune",
+                        model_name=model_choice,
+                        split_used=split_mode_rt,
+                        cv_score=cv_score_rt,
+                        test_r2_val=r2_rt,
+                        test_mae_val=mae_rt,
+                        train_rows_used=len(X_train_use_rt),
+                        test_rows_used=len(X_test_rt),
+                        cv_fold_used=(5 if len(df_modeling) < 500 else 7),
+                        outliers_removed=removed_outliers_rt,
+                        seed_used=retune_seed,
+                        n_iter_scale_used=retune_iter_scale
+                    )
+
+                    if r2_rt >= r2_threshold:
+                        st.success(f"Retune succeeded. Test R2 improved to {r2_rt:.3f} and passed threshold {r2_threshold:.3f}.")
+                    else:
+                        st.warning(f"Retune complete. Test R2 is {r2_rt:.3f}; still below threshold {r2_threshold:.3f}.")
+                except Exception as e:
+                    st.error(f"Retune error: {e}")
 
 # ----------------------------------------------------------------------
 # TAB 3: MODEL EXPLAINABILITY (XAI)
