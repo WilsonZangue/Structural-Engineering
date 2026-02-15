@@ -109,7 +109,17 @@ def build_model(task, model_choice, num_features, cat_features, use_log_target=T
     raise ValueError(f"Unknown task: {task}")
 
 
-def train_and_tune_model(X_train, y_train, model_choice, num_features, cat_features, use_log_target, sample_weight=None):
+def train_and_tune_model(
+    X_train,
+    y_train,
+    model_choice,
+    num_features,
+    cat_features,
+    use_log_target,
+    sample_weight=None,
+    random_state=42,
+    n_iter_scale=1.0
+):
     """Trains a tuned model using Regularized Linear, Extra Trees, or Gradient Boosting family."""
 
     def _regression_strata(y, max_bins=8):
@@ -148,6 +158,7 @@ def train_and_tune_model(X_train, y_train, model_choice, num_features, cat_featu
     n_rows = len(X_train)
     small_data = n_rows < 500
     n_iter = 40 if small_data else 80
+    n_iter = max(5, int(round(n_iter * float(n_iter_scale))))
     cv = 5 if small_data else 10
 
     # Randomized search on pipeline params
@@ -168,9 +179,9 @@ def train_and_tune_model(X_train, y_train, model_choice, num_features, cat_featu
     y_arr = np.asarray(y_train, dtype=float)
     strata = _regression_strata(y_arr)
     if strata is not None:
-        cv_splitter = list(StratifiedKFold(n_splits=cv, shuffle=True, random_state=42).split(X_train, strata))
+        cv_splitter = list(StratifiedKFold(n_splits=cv, shuffle=True, random_state=random_state).split(X_train, strata))
     else:
-        cv_splitter = KFold(n_splits=cv, shuffle=True, random_state=42)
+        cv_splitter = KFold(n_splits=cv, shuffle=True, random_state=random_state)
 
     if model_choice == "linear":
         sw_params = _sample_weight_params()
@@ -252,7 +263,7 @@ def train_and_tune_model(X_train, y_train, model_choice, num_features, cat_featu
         n_iter=n_iter,
         cv=cv_splitter,
         scoring='r2',
-        random_state=42,
+        random_state=random_state,
         n_jobs=-1
     )
     sw_params = _sample_weight_params()
