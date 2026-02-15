@@ -319,6 +319,25 @@ def train_classifier(X_train, y_train, model_choice, num_features, cat_features,
     n_iter = 20 if small_data else 50
     cv = 5 if small_data else 7
 
+    # Guard CV against small/imbalanced class counts.
+    cls_vals, cls_counts = np.unique(np.asarray(y_train), return_counts=True)
+    min_class_count = int(cls_counts.min()) if cls_counts.size else 0
+    if cls_vals.size < 2 or min_class_count < 2:
+        sw_params = _sample_weight_params()
+        if sw_params:
+            clf.fit(X_train, y_train, **sw_params)
+        else:
+            clf.fit(X_train, y_train)
+        return clf
+    cv = min(cv, min_class_count)
+    if cv < 2:
+        sw_params = _sample_weight_params()
+        if sw_params:
+            clf.fit(X_train, y_train, **sw_params)
+        else:
+            clf.fit(X_train, y_train)
+        return clf
+
     param_dist = {
         "model__n_estimators": [150, 250, 350, 450],
         "model__max_depth": [2, 3, 4],
