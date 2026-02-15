@@ -122,6 +122,7 @@ if 'models' not in st.session_state:
     st.session_state['last_baseline_mae'] = None
     st.session_state['clf_metrics'] = None
     st.session_state['clf_confusion_matrix'] = None
+    st.session_state['clf_last_error'] = None
     st.session_state['tuning_history'] = []
     st.session_state['tuning_attempt_counter'] = 0
 if 'target_col' in st.session_state:
@@ -998,69 +999,144 @@ with tabs[1]:
         st.dataframe(outliers[show_cols], use_container_width=True, hide_index=True)
 
         if not outliers.empty:
-            st.markdown("#### Top Outlier Deviation Box Plots")
-            st.caption("Each plot compares one outlier's feature values (red markers) against the overall feature distributions (box plots).")
-            features_for_box = [c for c in selected_num_features if c in df_modeling.columns]
-            if not features_for_box:
-                st.info("No numeric training features available for outlier deviation plots.")
+            st.markdown("#### Outlier Distribution by Project")
+            st.caption("Distribution of `total_project_hours` for each top residual outlier project context.")
+
+            top_outliers = outliers.head(10)
+            if 'total_project_hours' not in df_modeling.columns:
+                st.info("Column `total_project_hours` is required to render this chart.")
             else:
-                max_outlier_plots = min(10, len(outliers))
-                outlier_plot_count = st.slider(
-                    "Number of top outliers to visualize",
-                    min_value=1,
-                    max_value=max_outlier_plots,
-                    value=min(3, max_outlier_plots),
-                    key="outlier_boxplot_count"
-                )
-                outliers_to_plot = outliers.head(outlier_plot_count)
-                plot_cols = st.columns(2)
+                top_outliers = top_outliers.sort_values("abs_error", ascending=False)
+                palette = plt.cm.tab10(np.linspace(0, 1, 10))
+                pid_labels = []
+                box_data = []
+                abs_err_list = []
 
-                for i, (out_idx, out_row) in enumerate(outliers_to_plot.iterrows()):
-                    with plot_cols[i % 2]:
-                        fig_out = go.Figure()
-                        for feat in features_for_box:
-                            vals = pd.to_numeric(df_modeling[feat], errors='coerce').dropna()
-                            if vals.empty:
-                                continue
-                            fig_out.add_trace(go.Box(
-                                x=[feat] * len(vals),
+                for i, (idx, row) in enumerate(top_outliers.iterrows()):
+                    pid = str(row.get("project_id", idx))
+                    abs_err = float(row.get("abs_error", np.nan))
+
+                    # Build per-project reference distribution from similar projects.
+                    peer_mask = pd.Series(True, index=df_modeling.index)
+                    if 'project_type' in df_modeling.columns and 'project_type' in row.index and pd.notna(row.get('project_type', np.nan)):
+                        peer_mask = peer_mask & (df_modeling['project_type'] == row['project_type'])
+                    if 'scope_category' in df_modeling.columns and 'scope_category' in row.index and pd.notna(row.get('scope_category', np.nan)):
+                        peer_mask = peer_mask & (df_modeling['scope_category'] == row['scope_category'])
+
+                    peer_vals = pd.to_numeric(df_modeling.loc[peer_mask, 'total_project_hours'], errors='coerce').dropna()
+                    if len(peer_vals) < 8:
+                        peer_vals = pd.to_numeric(df_modeling['total_project_hours'], errors='coerce').dropna()
+                    if peer_vals.empty:
+                        continue
+
+                    pid_labels.append(pid)
+                    box_data.append(peer_vals.values.astype(float))
+                    abs_err_list.append(abs_err)
+
+                if not box_data:
+                    st.info("Unable to build box plot for outliers with current data.")
+                else:
+                    err_series = pd.to_numeric(top_outliers['abs_error'], errors='coerce').dropna()
+                    k1, k2, k3 = st.columns(3)
+                    k1.metric("Outlier Projects Shown", f"{len(pid_labels)}")
+                    if not err_series.empty:
+                        k2.metric("Mean Abs Error", f"{err_series.mean():.1f} h")
+                        k3.metric("Max Abs Error", f"{err_series.max():.1f} h")
+
+                    # Plotly-based boxplot to match app graph theme behavior
+                    fig_out = go.Figure()
+                    box_colors = [
+                        "#D81B60",  # magenta
+                        "#1E88E5",  # blue
+                        "#FFC107",  # amber
+                        "#004D40",  # teal-dark
+                        "#8E24AA",  # purple
+                        "#43A047",  # green
+                        "#F4511E",  # orange
+                        "#3949AB",  # indigo
+                        "#00ACC1",  # cyan
+                        "#6D4C41",  # brown
+                    ]
+
+                    for i, (pid, vals) in enumerate(zip(pid_labels, box_data)):
+                        color = box_colors[i % len(box_colors)]
+                        fig_out.add_trace(
+                            go.Box(
+                                x=[pid] * len(vals),
                                 y=vals,
-                                name=feat,
-                                boxpoints=False,
-                                marker_color="rgba(130,130,130,0.55)",
-                                line_color="rgba(100,100,100,0.8)",
-                                showlegend=False
-                            ))
-
-                        scatter_x = []
-                        scatter_y = []
-                        for feat in features_for_box:
-                            val = pd.to_numeric(pd.Series([out_row.get(feat, np.nan)]), errors='coerce').iloc[0]
-                            if pd.notna(val):
-                                scatter_x.append(feat)
-                                scatter_y.append(val)
-                        if scatter_x:
-                            fig_out.add_trace(go.Scatter(
-                                x=scatter_x,
-                                y=scatter_y,
-                                mode="markers",
-                                marker=dict(color="#d62728", size=10, line=dict(color="white", width=0.8)),
-                                name="Outlier value"
-                            ))
-
-                        out_id = str(out_row.get('project_id', out_idx))
-                        out_abs_error = float(out_row.get('abs_error', np.nan))
-                        fig_out.update_layout(
-                            template="plotly_white",
-                            title=f"Outlier: {out_id} | Abs Error: {out_abs_error:.1f}h",
-                            xaxis_title="Feature",
-                            yaxis_title="Value",
-                            xaxis_tickangle=-45,
-                            margin=dict(l=30, r=20, t=60, b=90),
-                            height=450,
-                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.0)
+                                name=pid,
+                                width=0.78,
+                                boxpoints="outliers",
+                                marker=dict(color=color, size=5, opacity=0.9),
+                                line=dict(color=color, width=2.8),
+                                fillcolor=color,
+                                opacity=0.55,
+                                whiskerwidth=0.6,
+                                quartilemethod="exclusive",
+                                legendgroup=pid,
+                                showlegend=True,
+                                hovertemplate=(
+                                    f"Project ID: {pid}"
+                                    + "<br>total_project_hours: %{y:.1f}"
+                                    + "<extra></extra>"
+                                )
+                            )
                         )
-                        st.plotly_chart(fig_out, use_container_width=True, key=f"outlier_boxplot_{i}_{out_id}")
+
+                    # Overlay the specific outlier project value as a highlighted red dot
+                    for j, (idx, row) in enumerate(top_outliers.iterrows()):
+                        if j >= len(pid_labels):
+                            break
+                        pid = pid_labels[j]
+                        outlier_val = pd.to_numeric(pd.Series([row.get('total_project_hours', np.nan)]), errors='coerce').iloc[0]
+                        if pd.notna(outlier_val):
+                            fig_out.add_trace(
+                                go.Scatter(
+                                    x=[pid],
+                                    y=[float(outlier_val)],
+                                    mode="markers",
+                                    marker=dict(symbol="diamond", size=10, color="#d62728", line=dict(color="white", width=1.1)),
+                                    name="Selected top-residual project value",
+                                    showlegend=(j == 0),
+                                    legendgroup="selected_outlier",
+                                    hovertemplate=(
+                                        f"Project ID: {pid}"
+                                        + "<br>Selected outlier total_project_hours: %{y:.1f}"
+                                        + "<extra></extra>"
+                                    )
+                                )
+                            )
+
+                    fig_out.update_layout(
+                        title={
+                            "text": "Top 10 Outlier Projects - Box Plot",
+                            "x": 0.01,
+                            "xanchor": "left",
+                            "y": 0.99,
+                            "yanchor": "top"
+                        },
+                        font=dict(size=13),
+                        xaxis_title="Project ID",
+                        yaxis_title="total_project_hours",
+                        xaxis_tickangle=-35,
+                        width=1350,
+                        height=900,
+                        boxmode="group",
+                        boxgap=0.02,
+                        boxgroupgap=0.0,
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.01,
+                            xanchor="left",
+                            x=0.0,
+                            title="Legend"
+                        ),
+                        margin=dict(l=70, r=30, t=130, b=95),
+                    )
+                    fig_out.update_yaxes(tickformat=",")
+                    st.caption("Key: hollow/isolated points on each box are statistical outliers (outside 1.5 x IQR whiskers). Red diamond marks the selected top-residual project value.")
+                    st.plotly_chart(fig_out, use_container_width=False, key="outlier_boxplot_top10_plotly")
 
     st.markdown("---")
     st.subheader("Model Card Export")
@@ -1088,7 +1164,7 @@ with tabs[1]:
 
     st.markdown("---")
     st.subheader("Comprehensive Results Export")
-    st.caption("Download model performance, explainability summaries, and related diagnostics as a ZIP package.")
+    st.caption("Download model performance, explainability summaries, and related diagnostics as a ZIP package (high-quality PNG charts).")
 
     export_ready = (
         st.session_state.get('models') is not None
@@ -1116,11 +1192,8 @@ with tabs[1]:
 
                 def _write_fig(zipf, stem, fig):
                     png_buf = io.BytesIO()
-                    jpg_buf = io.BytesIO()
-                    fig.savefig(png_buf, format="png", dpi=220, bbox_inches="tight", facecolor="white")
-                    fig.savefig(jpg_buf, format="jpeg", dpi=220, bbox_inches="tight", facecolor="white")
+                    fig.savefig(png_buf, format="png", dpi=300, bbox_inches="tight", facecolor="white")
                     zipf.writestr(f"charts/{stem}.png", png_buf.getvalue())
-                    zipf.writestr(f"charts/{stem}.jpg", jpg_buf.getvalue())
                     plt.close(fig)
 
                 with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -1135,6 +1208,8 @@ with tabs[1]:
                             "metrics/baseline_metrics.csv",
                             pd.DataFrame([{"baseline_mae_mean_predictor": float(st.session_state['last_baseline_mae'])}])
                         )
+                    if st.session_state.get('tuning_history'):
+                        _write_df(zf, "metrics/tuning_history.csv", pd.DataFrame(st.session_state['tuning_history']))
                     if st.session_state.get('backtest_results') is not None:
                         _write_df(zf, "metrics/backtest_results.csv", st.session_state['backtest_results'])
                     if st.session_state.get('clf_metrics') is not None:
@@ -1181,6 +1256,96 @@ with tabs[1]:
                     ax3.set_ylabel("Residual (Hours)")
                     ax3.grid(alpha=0.25)
                     _write_fig(zf, "residuals_vs_predicted", fig3)
+
+                    # Top residual outliers table + box plot by outlier project context
+                    try:
+                        diag_export_df = df_modeling.loc[y_test_exp.index].copy()
+                        outliers_export = residual_outliers(y_test_exp, y_pred_exp, diag_export_df, top_n=10)
+                        if not outliers_export.empty:
+                            _write_df(zf, "metrics/top10_residual_outliers.csv", outliers_export)
+
+                            if 'total_project_hours' in df_modeling.columns:
+                                top_outliers_export = outliers_export.sort_values("abs_error", ascending=False).head(10)
+                                pid_labels_exp = []
+                                box_data_exp = []
+                                selected_vals_exp = []
+
+                                for idx, row in top_outliers_export.iterrows():
+                                    pid = str(row.get("project_id", idx))
+
+                                    peer_mask = pd.Series(True, index=df_modeling.index)
+                                    if 'project_type' in df_modeling.columns and 'project_type' in row.index and pd.notna(row.get('project_type', np.nan)):
+                                        peer_mask = peer_mask & (df_modeling['project_type'] == row['project_type'])
+                                    if 'scope_category' in df_modeling.columns and 'scope_category' in row.index and pd.notna(row.get('scope_category', np.nan)):
+                                        peer_mask = peer_mask & (df_modeling['scope_category'] == row['scope_category'])
+
+                                    peer_vals = pd.to_numeric(df_modeling.loc[peer_mask, 'total_project_hours'], errors='coerce').dropna()
+                                    if len(peer_vals) < 8:
+                                        peer_vals = pd.to_numeric(df_modeling['total_project_hours'], errors='coerce').dropna()
+                                    if peer_vals.empty:
+                                        continue
+
+                                    pid_labels_exp.append(pid)
+                                    box_data_exp.append(peer_vals.values.astype(float))
+                                    selected_vals_exp.append(float(pd.to_numeric(pd.Series([row.get('total_project_hours', np.nan)]), errors='coerce').iloc[0]))
+
+                                if box_data_exp:
+                                    boxplot_long = pd.DataFrame({
+                                        "project_id": np.repeat(pid_labels_exp, [len(v) for v in box_data_exp]),
+                                        "total_project_hours": np.concatenate(box_data_exp),
+                                    })
+                                    _write_df(zf, "metrics/outlier_boxplot_source_data.csv", boxplot_long)
+
+                                    fig_out_exp, ax_out_exp = plt.subplots(figsize=(14, 8), facecolor="white")
+                                    bp = ax_out_exp.boxplot(
+                                        box_data_exp,
+                                        tick_labels=pid_labels_exp,
+                                        patch_artist=True,
+                                        widths=0.72,
+                                        showfliers=True,
+                                    )
+                                    palette_exp = plt.cm.tab10(np.linspace(0, 1, max(10, len(box_data_exp))))
+                                    for i, box in enumerate(bp["boxes"]):
+                                        box.set_facecolor(palette_exp[i % len(palette_exp)])
+                                        box.set_alpha(0.65)
+                                        box.set_linewidth(1.6)
+                                    for whisk in bp["whiskers"]:
+                                        whisk.set_linestyle("--")
+                                        whisk.set_linewidth(1.1)
+                                        whisk.set_color("#444444")
+                                    for cap in bp["caps"]:
+                                        cap.set_linewidth(1.2)
+                                        cap.set_color("#444444")
+                                    for med in bp["medians"]:
+                                        med.set_linewidth(2.2)
+                                        med.set_color("#1a1a1a")
+                                    for fl in bp["fliers"]:
+                                        fl.set_marker("o")
+                                        fl.set_markersize(4)
+                                        fl.set_markerfacecolor("none")
+                                        fl.set_markeredgecolor("#2b2b2b")
+
+                                    x_vals = np.arange(1, len(pid_labels_exp) + 1, dtype=float)
+                                    ax_out_exp.scatter(
+                                        x_vals,
+                                        selected_vals_exp,
+                                        marker="D",
+                                        s=42,
+                                        color="#d62728",
+                                        edgecolors="white",
+                                        linewidths=0.8,
+                                        zorder=5,
+                                        label="Selected top-residual project value",
+                                    )
+                                    ax_out_exp.set_title("Top 10 Outlier Projects - Box Plot", fontsize=14, pad=12)
+                                    ax_out_exp.set_xlabel("Project ID")
+                                    ax_out_exp.set_ylabel("total_project_hours")
+                                    ax_out_exp.tick_params(axis='x', rotation=35)
+                                    ax_out_exp.grid(axis="y", alpha=0.25)
+                                    ax_out_exp.legend(loc="upper right", frameon=True)
+                                    _write_fig(zf, "top10_outlier_projects_boxplot", fig_out_exp)
+                    except Exception as e:
+                        zf.writestr("metrics/outlier_export_error.txt", str(e))
 
                     # Permutation importance chart
                     try:
@@ -2011,6 +2176,11 @@ with tabs[3]:
     class_df = df_modeling[available_features + ['project_complexity_class']].dropna(subset=['project_complexity_class']).copy()
     Xc = class_df[available_features]
     yc = class_df['project_complexity_class']
+    cls_counts = yc.value_counts(dropna=True)
+    if not cls_counts.empty:
+        st.caption("Class distribution: " + ", ".join([f"{k}={int(v)}" for k, v in cls_counts.to_dict().items()]))
+        if int(cls_counts.min()) < 5:
+            st.warning("Some classes have very low counts; Gradient Boosting tuning may be unstable.")
     if yc.dropna().shape[0] < 10:
         st.warning("Not enough labeled rows to train classification.")
     else:
@@ -2025,59 +2195,74 @@ with tabs[3]:
         )
         if st.button("Train Classifier", key="train_clf"):
             try:
-                high_weight = 2.0
-                class_weights = np.where(yc_train == "High", high_weight, 1.0)
-                class_cat_features = [c for c in CAT_FEATURES if c in Xc_train.columns]
-                class_num_features = [c for c in Xc_train.columns if c not in class_cat_features]
-                clf_pipe = train_classifier(
-                    Xc_train,
-                    yc_train,
-                    clf_choice,
-                    class_num_features,
-                    class_cat_features,
-                    sample_weight=class_weights
-                )
-                preds = clf_pipe.predict(Xc_test)
-                acc = accuracy_score(yc_test, preds)
-                precision = precision_score(yc_test, preds, average="macro", zero_division=0)
-                recall_high = recall_score(yc_test, preds, labels=["High"], average="macro", zero_division=0)
-                f1 = f1_score(yc_test, preds, average="macro")
-                st.metric("Accuracy", f"{acc:.3f}")
-                st.metric("Precision (Macro)", f"{precision:.3f}")
-                st.metric("Recall (High)", f"{recall_high:.3f}")
-                st.metric("F1 (Macro)", f"{f1:.3f}")
+                st.session_state['clf_last_error'] = None
+                with st.spinner("Training classifier..."):
+                    high_weight = 2.0
+                    class_weights = np.where(yc_train == "High", high_weight, 1.0)
+                    class_cat_features = [c for c in CAT_FEATURES if c in Xc_train.columns]
+                    class_num_features = [c for c in Xc_train.columns if c not in class_cat_features]
+                    clf_pipe = train_classifier(
+                        Xc_train,
+                        yc_train,
+                        clf_choice,
+                        class_num_features,
+                        class_cat_features,
+                        sample_weight=class_weights
+                    )
+                    preds = clf_pipe.predict(Xc_test)
+                    acc = accuracy_score(yc_test, preds)
+                    precision = precision_score(yc_test, preds, average="macro", zero_division=0)
+                    recall_high = recall_score(yc_test, preds, labels=["High"], average="macro", zero_division=0)
+                    f1 = f1_score(yc_test, preds, average="macro")
+
+                    st.session_state['clf_model'] = clf_pipe
+                    st.session_state['clf_choice_model'] = clf_choice
+
+                    # Confusion matrix + false positive rate for High class
+                    labels = ["Low", "Medium", "High"]
+                    cm = confusion_matrix(yc_test, preds, labels=labels)
+                    cm_df = pd.DataFrame(cm, index=[f"true_{l}" for l in labels], columns=[f"pred_{l}" for l in labels])
+
+                    high_idx = labels.index("High")
+                    fp_high = cm[:, high_idx].sum() - cm[high_idx, high_idx]
+                    tn_high = cm.sum() - cm[:, high_idx].sum() - cm[high_idx, :].sum() + cm[high_idx, high_idx]
+                    fpr_high = fp_high / max(1, (fp_high + tn_high))
+
+                    st.session_state['clf_metrics'] = {
+                        "accuracy": float(acc),
+                        "precision_macro": float(precision),
+                        "recall_high": float(recall_high),
+                        "f1_macro": float(f1),
+                        "fpr_high": float(fpr_high)
+                    }
+                    st.session_state['clf_confusion_matrix'] = cm_df.copy()
                 st.success("Classification training complete.")
+            except Exception as e:
+                st.session_state['clf_last_error'] = str(e)
+                st.error(f"Classification Error: {e}")
 
-                st.session_state['clf_model'] = clf_pipe
-                st.session_state['clf_choice_model'] = clf_choice
-
-                # Confusion matrix + false positive rate for High class
-                labels = ["Low", "Medium", "High"]
-                cm = confusion_matrix(yc_test, preds, labels=labels)
-                cm_df = pd.DataFrame(cm, index=[f"true_{l}" for l in labels], columns=[f"pred_{l}" for l in labels])
-                st.session_state['clf_metrics'] = {
-                    "accuracy": float(acc),
-                    "precision_macro": float(precision),
-                    "recall_high": float(recall_high),
-                    "f1_macro": float(f1)
-                }
-                st.session_state['clf_confusion_matrix'] = cm_df.copy()
+        # Persisted results display (shows even after reruns)
+        clf_metrics = st.session_state.get('clf_metrics')
+        clf_cm = st.session_state.get('clf_confusion_matrix')
+        if clf_metrics is not None and st.session_state.get('clf_choice_model') == clf_choice:
+            st.metric("Accuracy", f"{clf_metrics['accuracy']:.3f}")
+            st.metric("Precision (Macro)", f"{clf_metrics['precision_macro']:.3f}")
+            st.metric("Recall (High)", f"{clf_metrics['recall_high']:.3f}")
+            st.metric("F1 (Macro)", f"{clf_metrics['f1_macro']:.3f}")
+            if clf_cm is not None:
                 st.caption("Confusion Matrix")
-                st.dataframe(cm_df, use_container_width=True)
-
-                # High vs rest false positive rate
-                high_idx = labels.index("High")
-                fp_high = cm[:, high_idx].sum() - cm[high_idx, high_idx]
-                tn_high = cm.sum() - cm[:, high_idx].sum() - cm[high_idx, :].sum() + cm[high_idx, high_idx]
-                fpr_high = fp_high / max(1, (fp_high + tn_high))
+                st.dataframe(clf_cm, use_container_width=True)
+            fpr_high = float(clf_metrics.get('fpr_high', np.nan))
+            if pd.notna(fpr_high):
                 if fpr_high < 0.30:
                     st.success(f"False Positive Rate (High): {fpr_high:.2f} (< 0.30)")
                 else:
                     st.warning(f"False Positive Rate (High): {fpr_high:.2f} (>= 0.30)")
-
-                st.info("Staffing guidance: assign senior engineers to projects classified as High complexity to reduce risk and avoid schedule overruns.")
-            except Exception as e:
-                st.error(f"Classification Error: {e}")
+            st.info("Staffing guidance: assign senior engineers to projects classified as High complexity to reduce risk and avoid schedule overruns.")
+        elif st.session_state.get('clf_last_error'):
+            st.error(f"Last Classification Error: {st.session_state['clf_last_error']}")
+        else:
+            st.caption("Click 'Train Classifier' to generate classification metrics.")
 
         if st.session_state.get('clf_model') is not None and st.session_state.get('clf_choice_model') == "Gradient Boosting Classifier":
             with st.expander("SHAP: Structural Drivers (Classifier)", expanded=False):
