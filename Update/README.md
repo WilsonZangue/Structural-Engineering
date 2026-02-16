@@ -176,6 +176,61 @@ Function: `compute_train_stats(df_modeling, num_cols)` in `modules/data.py`
 - Computes `mean` and `std` for available numeric training columns
 - Stored in session state and used during quotation-time drift checks
 
+### 5.5 Data Handling and Modeling Thought Process (Design Rationale)
+This section documents the modeling rationale used after dataset import and before/through model training.
+
+1. Why feature engineering is done after import  
+- Imported project data can be correct at column level but still weak at relationship level.  
+- The target (`total_project_hours`) is usually driven by interactions (scale per unit, vertical intensity, change pressure), not only by raw single columns.  
+- The interaction layer is added immediately after ingestion so every downstream stage (EDA, split, train, explainability, quotation) uses the same enriched feature space.
+
+2. Why these interaction features were added  
+- `area_per_unit = surface_area_m2 / (num_units + 1)`  
+  Rationale: separates large-area projects that are distributed across many units from projects with concentrated area per unit.  
+  Modeling value: improves sensitivity to density/complexity differences that raw `surface_area_m2` alone does not capture.
+
+- `height_per_level = building_height_m / (num_levels + 1)`  
+  Rationale: approximates average floor-to-floor intensity and vertical design burden.  
+  Modeling value: helps distinguish projects with similar height but different number of levels, which often have different effort requirements.
+
+- `complexity_interaction_index = surface_area_m2 * num_levels`  
+  Rationale: captures the compound effect of horizontal scale and vertical repetition.  
+  Modeling value: gives tree and linear-family models a direct signal for multiplicative complexity that would otherwise need to be inferred indirectly.
+
+- `revision_intensity = num_revisions / (actual_duration_days + 1)`  
+  Rationale: normalizes revision count by project duration so short, revision-heavy projects are properly identified as high-friction workloads.  
+  Modeling value: improves prediction in cases where absolute revision count alone underestimates effort volatility.
+
+3. Why this typically improves model usefulness and performance  
+- Better signal representation: domain interactions convert raw inputs into workload-relevant predictors.  
+- Lower ambiguity: similar raw projects become more separable in feature space.  
+- More stable tuning: hyperparameter search spends less effort compensating for missing domain structure in the data.  
+- Better generalization: engineered ratios/interactions often transfer better across project scales than raw magnitudes alone.
+
+4. Expected impact by model family  
+- Linear Regression / Ridge Regression: largest benefit, because engineered interactions make nonlinear relationships learnable in linear space.  
+- ExtraTrees / GradientBoosting: still beneficial, because explicit interaction variables reduce the burden on deep splits and can improve robustness on small/medium datasets.  
+- Classification models: interaction terms improve separability of `Low`/`Medium`/`High` complexity when class boundaries are driven by combined effects rather than single fields.
+
+5. Connection to training and tuning workflow  
+- Split is performed before model fitting; preprocessing and transforms are fit on training folds only, reducing leakage risk.  
+- Imputation and scaling make ratio/interaction features numerically stable for linear and distance-sensitive components.  
+- CV-based tuning evaluates models on held-out folds where these engineered terms often improve consistency of R-squared, MAE, and class-level recall behavior.
+
+6. Practical interpretation for documentation  
+- These engineered features are not arbitrary transformations; they encode structural engineering workload logic.  
+- They are intended to increase the usefulness of imported datasets by adding domain context that raw schema fields do not explicitly provide.  
+- In operational use, this usually improves estimate quality, reduces underestimation on complex projects, and produces more defensible model explanations.
+
+### 5.6 Before vs After Feature Space (Documentation View)
+| Stage | Feature Set | Example Columns | Modeling Limitation / Benefit |
+|---|---|---|---|
+| Before engineering | Raw metadata only | `surface_area_m2`, `num_levels`, `num_units`, `building_height_m`, `actual_duration_days`, `num_revisions`, categorical context | Limitation: model sees individual magnitudes but not workload intensity relationships between variables. |
+| After engineering | Raw metadata + interaction features | `area_per_unit`, `height_per_level`, `complexity_interaction_index`, `revision_intensity` (plus original columns) | Benefit: model receives explicit density, vertical intensity, compound scale, and revision-pressure signals. |
+| Training impact | Enriched feature space in the same pipeline/CV workflow | Same train/test split and CV settings, but richer predictors | Benefit: typically improved fit stability, better outlier handling, and more meaningful tuning behavior. |
+| Explainability impact | Higher-information feature attribution | SHAP and permutation now include domain interaction terms | Benefit: explanations align better with engineering logic and are easier to defend in documentation. |
+| Operational impact | Better quote and risk sensitivity | Interaction-driven inputs feed quotation and drift checks | Benefit: reduced risk of optimistic estimates for high-complexity or revision-dense projects. |
+
 ---
 
 ## 6. Canonical Feature and Target Definitions
