@@ -9,7 +9,7 @@ from sklearn.ensemble import (
     ExtraTreesRegressor
 )
 from sklearn.linear_model import LinearRegression, Ridge, RidgeCV, LogisticRegression
-from sklearn.metrics import r2_score, recall_score, make_scorer
+from sklearn.metrics import mean_absolute_error, r2_score, recall_score, make_scorer
 from sklearn.model_selection import RandomizedSearchCV, KFold, StratifiedKFold, cross_val_score
 
 # Optional regressors
@@ -275,6 +275,72 @@ def train_and_tune_model(
     r2 = r2_score(y_train, best_model.predict(X_train))
     _ = r2  # kept for debugging parity if needed later
     return best_model, float(search.best_score_)
+
+
+def run_regression_training_attempt(
+    X_train,
+    y_train,
+    X_test,
+    y_test,
+    model_choice,
+    num_features,
+    cat_features,
+    use_log_target=False,
+    remove_outliers=False,
+    outlier_count=0,
+    outlier_sample_weight=None,
+    random_state=42,
+    n_iter_scale=1.0
+):
+    """Shared regression training attempt used by initial train and retune."""
+    X_train_use = X_train
+    y_train_use = y_train
+    baseline_metrics = None
+    removed_outliers = 0
+
+    if remove_outliers:
+        base_model, _ = train_and_tune_model(
+            X_train, y_train, model_choice,
+            num_features, cat_features, use_log_target,
+            sample_weight=outlier_sample_weight,
+            random_state=random_state,
+            n_iter_scale=n_iter_scale
+        )
+        train_preds = base_model.predict(X_train)
+        resid = (y_train - train_preds).abs()
+        drop_idx = resid.sort_values(ascending=False).head(outlier_count).index
+        X_train_use = X_train.drop(index=drop_idx)
+        y_train_use = y_train.drop(index=drop_idx)
+        removed_outliers = int(len(drop_idx))
+
+        base_preds = base_model.predict(X_test)
+        baseline_metrics = {
+            "mae": float(mean_absolute_error(y_test, base_preds)),
+            "r2": float(r2_score(y_test, base_preds))
+        }
+
+    tuned_model, performance_metric = train_and_tune_model(
+        X_train_use, y_train_use, model_choice,
+        num_features, cat_features, use_log_target,
+        sample_weight=None,
+        random_state=random_state,
+        n_iter_scale=n_iter_scale
+    )
+    preds = tuned_model.predict(X_test)
+    mae_test = mean_absolute_error(y_test, preds)
+    r2_test = r2_score(y_test, preds)
+
+    return {
+        "tuned_model": tuned_model,
+        "performance_metric": float(performance_metric),
+        "preds": preds,
+        "mae_test": float(mae_test),
+        "r2_test": float(r2_test),
+        "train_rows_used": int(len(X_train_use)),
+        "test_rows": int(len(X_test)),
+        "removed_outliers": removed_outliers,
+        "baseline_metrics": baseline_metrics,
+    }
 
 
 def train_classifier(X_train, y_train, model_choice, num_features, cat_features, sample_weight=None):
