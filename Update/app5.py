@@ -24,7 +24,7 @@ from sklearn.decomposition import PCA
 # Dataset handlers
 from data_handlers.common import _parse_date_column, get_selected_num_features
 from modules.data import load_uploaded_csv, compute_train_stats
-from modules.modeling import build_model, train_and_tune_model, train_classifier, get_regression_registry
+from modules.modeling import build_model, train_and_tune_model, train_classifier, get_regression_registry, run_regression_training_attempt
 from modules.explainability import get_shap_data, get_shap_interaction_data, get_ale_data
 from modules.diagnostics import detect_leakage, select_features, stability_report, residual_outliers
 
@@ -753,6 +753,22 @@ with tabs[1]:
         hist = st.session_state.get('tuning_history', [])
         hist.append(row)
         st.session_state['tuning_history'] = hist
+
+    def _store_regression_attempt_result(result, model_name, selected_features_in, rows_total, y_test_values):
+        """Persist shared training-attempt outputs to Streamlit session state."""
+        st.session_state['models'] = result["tuned_model"]
+        st.session_state['mode'] = 'point'
+        st.session_state['train_r2'] = float(result["r2_test"])
+        st.session_state['y_test'] = y_test_values
+        st.session_state['y_preds'] = result["preds"]
+        st.session_state['last_train_metrics'] = {
+            "model": model_name,
+            "mae": float(result["mae_test"]),
+            "r2": float(result["r2_test"]),
+            "rows": int(rows_total),
+            "features": ", ".join(selected_features_in)
+        }
+        st.session_state['last_train_features'] = selected_features_in
     
     # Training readiness checks
     train_issues = []
@@ -906,42 +922,35 @@ with tabs[1]:
             st.session_state['quote_generated'] = False # Reset quote when training new model
             with st.spinner("Executing Training & Hyperparameter Search..."):
                 try:
-                    # Optional outlier filtering (train-only) to test impact
-                    X_train_use, y_train_use = X_train, y_train
-                    baseline_metrics = None
-                    if remove_outliers:
-                        base_model, _ = train_and_tune_model(
-                            X_train, y_train, model_choice,
-                            selected_num_features, CAT_FEATURES, use_log_target,
-                            sample_weight=w_train if 'w_train' in locals() else None
-                        )
-                        train_preds = base_model.predict(X_train)
-                        resid = (y_train - train_preds).abs()
-                        drop_idx = resid.sort_values(ascending=False).head(outlier_count).index
-                        X_train_use = X_train.drop(index=drop_idx)
-                        y_train_use = y_train.drop(index=drop_idx)
-                        st.caption(f"Outliers removed from training: {len(drop_idx)}")
-
-                        base_preds = base_model.predict(X_test)
-                        baseline_metrics = {
-                            "mae": float(mean_absolute_error(y_test, base_preds)),
-                            "r2": float(r2_score(y_test, base_preds))
-                        }
-
-                    tuned_model, performance_metric = train_and_tune_model(
-                        X_train_use, y_train_use, model_choice,
-                        selected_num_features, CAT_FEATURES, use_log_target,
-                        sample_weight=None,
+                    train_result = run_regression_training_attempt(
+                        X_train, y_train, X_test, y_test,
+                        model_choice=model_choice,
+                        num_features=selected_num_features,
+                        cat_features=CAT_FEATURES,
+                        use_log_target=use_log_target,
+                        remove_outliers=remove_outliers,
+                        outlier_count=outlier_count,
+                        outlier_sample_weight=w_train if 'w_train' in locals() else None,
                         random_state=42,
                         n_iter_scale=1.0
                     )
-                    st.session_state['models'] = tuned_model
-                    st.session_state['mode'] = 'point'
-                    
-                    preds = tuned_model.predict(X_test)
-                    mae_test = mean_absolute_error(y_test, preds)
-                    r2_test = r2_score(y_test, preds)
-                    st.session_state['train_r2'] = r2_test # Store R2 for display
+                    _store_regression_attempt_result(
+                        train_result,
+                        model_name=model_choice,
+                        selected_features_in=selected_features,
+                        rows_total=(len(X_train) + len(X_test)),
+                        y_test_values=y_test
+                    )
+                    tuned_model = train_result["tuned_model"]
+                    performance_metric = train_result["performance_metric"]
+                    mae_test = train_result["mae_test"]
+                    r2_test = train_result["r2_test"]
+                    baseline_metrics = train_result["baseline_metrics"]
+                    outliers_removed = train_result["removed_outliers"]
+
+                    if outliers_removed > 0:
+                        st.caption(f"Outliers removed from training: {outliers_removed}")
+
                     st.metric("Test MAE (Tuned Model)", f"{mae_test:.1f} Hours")
                     st.metric("Test R2 (Tuned Model)", f"{r2_test:.3f}")
                     st.caption(f"Best CV R2 during tuning: {performance_metric:.3f}")
@@ -970,9 +979,6 @@ with tabs[1]:
                         )
                     st.caption(f"Approx. prediction interval: +/-{mae_test * 1.5:.1f} hours (1.5 x MAE)")
 
-                    # Store predictions for visualization and MLOps simulation
-                    st.session_state['y_test'] = y_test
-                    st.session_state['y_preds'] = preds
                     # Baseline comparison (mean predictor)
                     try:
                         baseline_pred = np.full_like(y_test, y_train.mean(), dtype=float)
@@ -985,14 +991,6 @@ with tabs[1]:
                     # R2 threshold gate (engineering estimation reliability)
                     if r2_test < r2_threshold:
                         st.warning("R2 below 0.70. Model may be unreliable for engineering estimation.")
-                    st.session_state['last_train_metrics'] = {
-                        "model": model_choice,
-                        "mae": float(mae_test),
-                        "r2": float(r2_test),
-                        "rows": int(len(X_train) + len(X_test)),
-                        "features": ", ".join(selected_features)
-                    }
-                    st.session_state['last_train_features'] = selected_features
                     _append_tuning_history(
                         trigger="initial_train",
                         model_name=model_choice,
@@ -1000,10 +998,10 @@ with tabs[1]:
                         cv_score=performance_metric,
                         test_r2_val=r2_test,
                         test_mae_val=mae_test,
-                        train_rows_used=len(X_train_use),
+                        train_rows_used=train_result["train_rows_used"],
                         test_rows_used=len(X_test),
                         cv_fold_used=cv_folds,
-                        outliers_removed=(len(X_train) - len(X_train_use)),
+                        outliers_removed=outliers_removed,
                         seed_used=42,
                         n_iter_scale_used=1.0
                     )
@@ -1768,47 +1766,28 @@ with tabs[1]:
                         X, y, sample_weight=sample_weight_rt, split_mode=requested_split_mode, test_size=0.2, random_state=split_seed
                     )
 
-                    X_train_use_rt, y_train_use_rt = X_train_rt, y_train_rt
-                    removed_outliers_rt = 0
-                    if retune_outlier:
-                        base_model_rt, _ = train_and_tune_model(
-                            X_train_rt, y_train_rt, model_choice,
-                            selected_num_features, CAT_FEATURES, use_log_target,
-                            sample_weight=w_train_rt,
-                            random_state=retune_seed,
-                            n_iter_scale=retune_iter_scale
-                        )
-                        resid_rt = (y_train_rt - base_model_rt.predict(X_train_rt)).abs()
-                        drop_idx_rt = resid_rt.sort_values(ascending=False).head(outlier_count).index
-                        X_train_use_rt = X_train_rt.drop(index=drop_idx_rt)
-                        y_train_use_rt = y_train_rt.drop(index=drop_idx_rt)
-                        removed_outliers_rt = int(len(drop_idx_rt))
-
-                    tuned_model_rt, cv_score_rt = train_and_tune_model(
-                        X_train_use_rt, y_train_use_rt, model_choice,
-                        selected_num_features, CAT_FEATURES, use_log_target,
-                        sample_weight=None,
+                    retune_result = run_regression_training_attempt(
+                        X_train_rt, y_train_rt, X_test_rt, y_test_rt,
+                        model_choice=model_choice,
+                        num_features=selected_num_features,
+                        cat_features=CAT_FEATURES,
+                        use_log_target=use_log_target,
+                        remove_outliers=retune_outlier,
+                        outlier_count=outlier_count,
+                        outlier_sample_weight=w_train_rt,
                         random_state=retune_seed,
                         n_iter_scale=retune_iter_scale
                     )
-                    preds_rt = tuned_model_rt.predict(X_test_rt)
-                    mae_rt = mean_absolute_error(y_test_rt, preds_rt)
-                    r2_rt = r2_score(y_test_rt, preds_rt)
-
-                    # Update active model/session outputs
-                    st.session_state['models'] = tuned_model_rt
-                    st.session_state['mode'] = 'point'
-                    st.session_state['train_r2'] = float(r2_rt)
-                    st.session_state['y_test'] = y_test_rt
-                    st.session_state['y_preds'] = preds_rt
-                    st.session_state['last_train_metrics'] = {
-                        "model": model_choice,
-                        "mae": float(mae_rt),
-                        "r2": float(r2_rt),
-                        "rows": int(len(X_train_rt) + len(X_test_rt)),
-                        "features": ", ".join(selected_features)
-                    }
-                    st.session_state['last_train_features'] = selected_features
+                    _store_regression_attempt_result(
+                        retune_result,
+                        model_name=model_choice,
+                        selected_features_in=selected_features,
+                        rows_total=(len(X_train_rt) + len(X_test_rt)),
+                        y_test_values=y_test_rt
+                    )
+                    cv_score_rt = retune_result["performance_metric"]
+                    mae_rt = retune_result["mae_test"]
+                    r2_rt = retune_result["r2_test"]
 
                     _append_tuning_history(
                         trigger="retune",
@@ -1817,10 +1796,10 @@ with tabs[1]:
                         cv_score=cv_score_rt,
                         test_r2_val=r2_rt,
                         test_mae_val=mae_rt,
-                        train_rows_used=len(X_train_use_rt),
+                        train_rows_used=retune_result["train_rows_used"],
                         test_rows_used=len(X_test_rt),
                         cv_fold_used=(5 if len(df_modeling) < 500 else 7),
-                        outliers_removed=removed_outliers_rt,
+                        outliers_removed=retune_result["removed_outliers"],
                         seed_used=retune_seed,
                         n_iter_scale_used=retune_iter_scale
                     )
