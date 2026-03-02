@@ -16,7 +16,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer, TransformedTargetRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression, Ridge
-from sklearn.ensemble import ExtraTreesRegressor, GradientBoostingRegressor
+from sklearn.ensemble import ExtraTreesRegressor, GradientBoostingRegressor, GradientBoostingClassifier
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error, silhouette_score, accuracy_score, recall_score, f1_score, precision_score, confusion_matrix
 from sklearn.inspection import permutation_importance
 from sklearn.cluster import KMeans
@@ -254,6 +254,65 @@ def add_interaction_features(df):
         df['revision_intensity'] = df['num_revisions'] / (df['actual_duration_days'].fillna(0) + 1.0)
 
     return df
+
+
+def _get_final_estimator(model_obj):
+    """Return fitted final estimator from wrapped regression/classification pipelines."""
+    est = model_obj
+    if isinstance(est, TransformedTargetRegressor):
+        est = est.regressor_ if hasattr(est, "regressor_") else est.regressor
+    if isinstance(est, Pipeline):
+        est = est.named_steps.get("model", est)
+    return est
+
+
+def _export_safe_value(val):
+    if isinstance(val, np.generic):
+        val = val.item()
+    if isinstance(val, (dict, list, tuple, set)):
+        return str(val)
+    if val is None:
+        return ""
+    return val
+
+
+def _extract_model_parameter_rows(reg_model=None, reg_key=None, clf_model=None, clf_choice=None):
+    """Create a normalized parameter table for export ZIP."""
+    rows = []
+
+    if reg_model is not None:
+        reg_est = _get_final_estimator(reg_model)
+        reg_params = reg_est.get_params(deep=False) if hasattr(reg_est, "get_params") else {}
+        reg_type = str(reg_key or "").lower().strip()
+
+        if reg_type == "ridge" or isinstance(reg_est, Ridge) or reg_est.__class__.__name__ == "RidgeCV":
+            alpha_val = getattr(reg_est, "alpha_", None)
+            if alpha_val is None:
+                alpha_val = reg_params.get("alpha", None)
+            rows.append({"scope": "regression", "model": "Ridge Regression", "parameter": "alpha", "value": _export_safe_value(alpha_val)})
+
+        elif reg_type == "rf" or isinstance(reg_est, ExtraTreesRegressor):
+            for p in ["n_estimators", "max_depth", "min_samples_split", "min_samples_leaf", "max_features"]:
+                rows.append({"scope": "regression", "model": "Random Forest (Extra Trees)", "parameter": p, "value": _export_safe_value(reg_params.get(p, None))})
+
+        elif reg_type == "gbr" or isinstance(reg_est, GradientBoostingRegressor):
+            for p in ["n_estimators", "learning_rate", "max_depth", "min_samples_split", "min_samples_leaf", "subsample", "max_features"]:
+                rows.append({"scope": "regression", "model": "Gradient Boosting Regressor", "parameter": p, "value": _export_safe_value(reg_params.get(p, None))})
+
+    if clf_model is not None:
+        clf_est = _get_final_estimator(clf_model)
+        clf_params = clf_est.get_params(deep=False) if hasattr(clf_est, "get_params") else {}
+        clf_type = str(clf_choice or "").strip()
+
+        if clf_type == "Logistic Regression" or isinstance(clf_est, LogisticRegression):
+            for p in ["C", "class_weight", "solver"]:
+                rows.append({"scope": "classification", "model": "Logistic Regression", "parameter": p, "value": _export_safe_value(clf_params.get(p, None))})
+
+        elif clf_type == "Gradient Boosting Classifier" or isinstance(clf_est, GradientBoostingClassifier):
+            for p in ["n_estimators", "learning_rate", "max_depth", "subsample"]:
+                rows.append({"scope": "classification", "model": "Gradient Boosting Classifier", "parameter": p, "value": _export_safe_value(clf_params.get(p, None))})
+
+    return rows
 
 
 df_modeling = add_interaction_features(df_modeling)
@@ -1216,6 +1275,19 @@ with tabs[1]:
                         _write_df(zf, "metrics/classification_metrics.csv", pd.DataFrame([st.session_state['clf_metrics']]))
                     if st.session_state.get('clf_confusion_matrix') is not None:
                         _write_df(zf, "metrics/classification_confusion_matrix.csv", st.session_state['clf_confusion_matrix'])
+                    # Fitted model parameters (regression + optional classification)
+                    param_rows = _extract_model_parameter_rows(
+                        reg_model=st.session_state.get('models'),
+                        reg_key=st.session_state.get('last_train_metrics', {}).get('model'),
+                        clf_model=st.session_state.get('clf_model'),
+                        clf_choice=st.session_state.get('clf_choice_model')
+                    )
+                    if param_rows:
+                        _write_df(
+                            zf,
+                            "metrics/model_hyperparameters.csv",
+                            pd.DataFrame(param_rows).set_index(["scope", "model", "parameter"])
+                        )
 
                     # Summary notes
                     summary_lines = [
@@ -1224,6 +1296,8 @@ with tabs[1]:
                         f"Rows in test set: {len(y_test_exp)}",
                         f"Model: {st.session_state.get('last_train_metrics', {}).get('model', 'unknown')}",
                     ]
+                    if param_rows:
+                        summary_lines.append("Included: metrics/model_hyperparameters.csv")
                     zf.writestr("README_export.txt", "\n".join(summary_lines))
 
                     # Performance chart: Actual vs Predicted
