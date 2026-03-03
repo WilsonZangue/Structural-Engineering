@@ -58,7 +58,7 @@ CAT_FEATURES = [
 ]
 
 st.set_page_config(
-    page_title="Daskan Intelligence | Project Estimator",
+    page_title="Daskan Intelligence",
     page_icon="DaskanLogo.png",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -125,6 +125,8 @@ if 'models' not in st.session_state:
     st.session_state['clf_last_error'] = None
     st.session_state['tuning_history'] = []
     st.session_state['tuning_attempt_counter'] = 0
+    st.session_state['last_retune_r2'] = np.nan
+    st.session_state['last_retune_mae'] = np.nan
 if 'target_col' in st.session_state:
     del st.session_state['target_col']
 
@@ -716,6 +718,8 @@ with tabs[0]:
 with tabs[1]:
     st.header("Effort Estimation Models")
     r2_threshold = 0.7
+    RETUNE_MIN_R2_GAIN = 0.01
+    RETUNE_MIN_MAE_GAIN_PCT = 0.02
 
     def _append_tuning_history(
         trigger,
@@ -729,8 +733,66 @@ with tabs[1]:
         cv_fold_used,
         outliers_removed=0,
         seed_used=42,
-        n_iter_scale_used=1.0
+        n_iter_scale_used=1.0,
+        tuned_model=None,
+        promoted=np.nan,
+        promotion_reason="",
+        guard_r2_incumbent=np.nan,
+        guard_r2_candidate=np.nan,
+        guard_r2_delta=np.nan,
+        guard_mae_incumbent=np.nan,
+        guard_mae_candidate=np.nan,
+        guard_mae_improvement_pct=np.nan
     ):
+        def _extract_history_hyperparams(model_key, fitted_model):
+            keys = [
+                "alpha",
+                "n_estimators",
+                "learning_rate",
+                "max_depth",
+                "min_samples_split",
+                "min_samples_leaf",
+                "subsample",
+                "max_features",
+            ]
+            params_out = {k: np.nan for k in keys}
+            if fitted_model is None:
+                return params_out
+
+            est = _get_final_estimator(fitted_model)
+            est_params = est.get_params(deep=False) if hasattr(est, "get_params") else {}
+            model_key = str(model_key).lower().strip()
+
+            if model_key == "ridge":
+                params_out["alpha"] = getattr(est, "alpha_", est_params.get("alpha", np.nan))
+            elif model_key == "rf":
+                for p in ["n_estimators", "max_depth", "min_samples_split", "min_samples_leaf", "max_features"]:
+                    params_out[p] = est_params.get(p, np.nan)
+            elif model_key == "gbr":
+                for p in ["n_estimators", "learning_rate", "max_depth", "min_samples_split", "min_samples_leaf", "subsample", "max_features"]:
+                    params_out[p] = est_params.get(p, np.nan)
+
+            return params_out
+
+        def _format_hyperparam_summary(model_key, params_dict):
+            _ = model_key
+            ordered_keys = [
+                "alpha",
+                "n_estimators",
+                "learning_rate",
+                "max_depth",
+                "min_samples_split",
+                "min_samples_leaf",
+                "subsample",
+                "max_features",
+            ]
+            parts = []
+            for k in ordered_keys:
+                v = params_dict.get(k, np.nan)
+                v_str = "N/A" if pd.isna(v) else str(v)
+                parts.append(f"{k}={v_str}")
+            return "; ".join(parts)
+
         attempt = int(st.session_state.get('tuning_attempt_counter', 0)) + 1
         st.session_state['tuning_attempt_counter'] = attempt
         row = {
@@ -749,7 +811,17 @@ with tabs[1]:
             "seed": int(seed_used),
             "n_iter_scale": float(n_iter_scale_used),
             "threshold_passed": bool(test_r2_val >= r2_threshold),
+            "promoted": promoted,
+            "promotion_reason": promotion_reason,
+            "guard_r2_incumbent": guard_r2_incumbent,
+            "guard_r2_candidate": guard_r2_candidate,
+            "guard_r2_delta": guard_r2_delta,
+            "guard_mae_incumbent": guard_mae_incumbent,
+            "guard_mae_candidate": guard_mae_candidate,
+            "guard_mae_improvement_pct": guard_mae_improvement_pct,
         }
+        hyperparams = _extract_history_hyperparams(model_name, tuned_model)
+        row["Hyperparameters"] = _format_hyperparam_summary(model_name, hyperparams)
         hist = st.session_state.get('tuning_history', [])
         hist.append(row)
         st.session_state['tuning_history'] = hist
@@ -769,6 +841,65 @@ with tabs[1]:
             "features": ", ".join(selected_features_in)
         }
         st.session_state['last_train_features'] = selected_features_in
+
+    def _retune_promotion_gate(incumbent_model, candidate_model, X_guard, y_guard):
+        """
+        Promote only when candidate beats incumbent on fixed guard holdout
+        by both R2 and MAE margins to reduce false retunes.
+        """
+        gate = {
+            "promote": False,
+            "reason": "",
+            "incumbent_r2": np.nan,
+            "candidate_r2": np.nan,
+            "r2_delta": np.nan,
+            "incumbent_mae": np.nan,
+            "candidate_mae": np.nan,
+            "mae_improvement_pct": np.nan,
+        }
+
+        if candidate_model is None:
+            gate["reason"] = "No candidate model produced."
+            return gate
+        if incumbent_model is None:
+            gate["promote"] = True
+            gate["reason"] = "No incumbent model; candidate promoted."
+            return gate
+        if X_guard is None or y_guard is None or len(X_guard) == 0:
+            gate["reason"] = "No fixed holdout available for safe comparison."
+            return gate
+
+        inc_preds = incumbent_model.predict(X_guard)
+        cand_preds = candidate_model.predict(X_guard)
+        inc_r2 = float(r2_score(y_guard, inc_preds))
+        cand_r2 = float(r2_score(y_guard, cand_preds))
+        inc_mae = float(mean_absolute_error(y_guard, inc_preds))
+        cand_mae = float(mean_absolute_error(y_guard, cand_preds))
+
+        r2_delta = cand_r2 - inc_r2
+        mae_improvement_pct = (inc_mae - cand_mae) / max(abs(inc_mae), 1e-9)
+
+        gate.update({
+            "incumbent_r2": inc_r2,
+            "candidate_r2": cand_r2,
+            "r2_delta": float(r2_delta),
+            "incumbent_mae": inc_mae,
+            "candidate_mae": cand_mae,
+            "mae_improvement_pct": float(mae_improvement_pct),
+        })
+
+        if r2_delta >= RETUNE_MIN_R2_GAIN and mae_improvement_pct >= RETUNE_MIN_MAE_GAIN_PCT:
+            gate["promote"] = True
+            gate["reason"] = (
+                f"Promoted: guard R2 delta {r2_delta:+.3f} and MAE improvement {mae_improvement_pct:.1%} "
+                f"met thresholds (R2 >= +{RETUNE_MIN_R2_GAIN:.3f}, MAE >= {RETUNE_MIN_MAE_GAIN_PCT:.1%})."
+            )
+        else:
+            gate["reason"] = (
+                f"Rejected: guard R2 delta {r2_delta:+.3f}, guard MAE improvement {mae_improvement_pct:.1%}; "
+                f"requires R2 >= +{RETUNE_MIN_R2_GAIN:.3f} and MAE >= {RETUNE_MIN_MAE_GAIN_PCT:.1%}."
+            )
+        return gate
     
     # Training readiness checks
     train_issues = []
@@ -1003,7 +1134,10 @@ with tabs[1]:
                         cv_fold_used=cv_folds,
                         outliers_removed=outliers_removed,
                         seed_used=42,
-                        n_iter_scale_used=1.0
+                        n_iter_scale_used=1.0,
+                        tuned_model=train_result["tuned_model"],
+                        promoted=True,
+                        promotion_reason="Initial training run (active model set)."
                     )
                     
                     # CV summary for selected model
@@ -1032,7 +1166,15 @@ with tabs[1]:
                     st.error(f"Training Error: {e}")
 
     st.markdown("---")
-    st.info(f"Current Model: **{model_choice}** | Mode: **{st.session_state['mode'].upper()}** | Test R2: **{st.session_state['train_r2']:.3f}**")
+    current_r2_text = f"{st.session_state['train_r2']:.3f}"
+    latest_retune_r2 = st.session_state.get('last_retune_r2', np.nan)
+    if pd.notna(latest_retune_r2):
+        st.info(
+            f"Current Model: **{model_choice}** | Mode: **{st.session_state['mode'].upper()}** | "
+            f"Current Model R2: **{current_r2_text}** | Latest Retune R2: **{latest_retune_r2:.3f}**"
+        )
+    else:
+        st.info(f"Current Model: **{model_choice}** | Mode: **{st.session_state['mode'].upper()}** | Current Model R2: **{current_r2_text}**")
     st.caption("Scaling: RobustScaler for num_revisions; StandardScaler for other numeric features.")
 
     st.markdown("---")
@@ -1711,17 +1853,70 @@ with tabs[1]:
         if history_df.empty:
             st.info("No tuning attempts recorded yet.")
         else:
+            numeric_cols = [
+                "attempt", "train_rows", "test_rows", "cv_folds",
+                "cv_r2_best_or_mean", "test_r2", "test_mae",
+                "outliers_removed", "seed", "n_iter_scale",
+                "guard_r2_incumbent", "guard_r2_candidate", "guard_r2_delta",
+                "guard_mae_incumbent", "guard_mae_candidate", "guard_mae_improvement_pct"
+            ]
+            for c in numeric_cols:
+                if c in history_df.columns:
+                    history_df[c] = pd.to_numeric(history_df[c], errors="coerce")
+            if "threshold_passed" in history_df.columns:
+                history_df["threshold_passed"] = history_df["threshold_passed"].astype(bool)
+            if "promoted" in history_df.columns:
+                history_df["promoted"] = history_df["promoted"].astype("boolean")
+
+            history_df = history_df.sort_values("attempt", ascending=False, kind="stable")
+            latest_row = history_df.iloc[0]
+            best_r2 = history_df["test_r2"].max() if "test_r2" in history_df.columns else np.nan
+            latest_r2 = latest_row.get("test_r2", np.nan)
+            attempts_count = int(history_df["attempt"].notna().sum()) if "attempt" in history_df.columns else len(history_df)
+
+            h1, h2, h3 = st.columns(3)
+            h1.metric("Tuning Attempts", f"{attempts_count}")
+            h2.metric("Best Test R2", f"{best_r2:.3f}" if pd.notna(best_r2) else "N/A")
+            h3.metric("Latest Test R2", f"{latest_r2:.3f}" if pd.notna(latest_r2) else "N/A")
+
+            model_filter_options = ["All Models"] + sorted([str(m) for m in history_df["model"].dropna().unique()]) if "model" in history_df.columns else ["All Models"]
+            selected_model_filter = st.selectbox(
+                "History Filter (Model)",
+                model_filter_options,
+                index=0,
+                key="tuning_history_model_filter"
+            )
+            filtered_history_df = history_df
+            if selected_model_filter != "All Models" and "model" in history_df.columns:
+                filtered_history_df = history_df[history_df["model"].astype(str) == selected_model_filter].copy()
+
             display_cols = [
                 "attempt", "timestamp_utc", "trigger", "model", "split_mode",
                 "train_rows", "test_rows", "cv_folds", "cv_r2_best_or_mean",
                 "test_r2", "test_mae", "outliers_removed", "seed", "n_iter_scale",
-                "threshold_passed"
+                "threshold_passed", "promoted", "guard_r2_delta", "guard_mae_improvement_pct",
+                "promotion_reason", "Hyperparameters",
             ]
-            display_cols = [c for c in display_cols if c in history_df.columns]
+            display_cols = [c for c in display_cols if c in filtered_history_df.columns]
+            display_df = filtered_history_df[display_cols].copy()
+            if "threshold_passed" in display_df.columns:
+                display_df["threshold_passed"] = display_df["threshold_passed"].map({True: "PASS", False: "REVIEW"})
+            if "promoted" in display_df.columns:
+                display_df["promoted"] = display_df["promoted"].map({True: "YES", False: "NO"})
+
             st.dataframe(
-                history_df[display_cols].sort_values("attempt", ascending=False),
+                display_df,
                 use_container_width=True,
                 hide_index=True
+            )
+            hist_csv_buf = io.StringIO()
+            history_df.to_csv(hist_csv_buf, index=False)
+            st.download_button(
+                "Download Tuning History (CSV)",
+                data=hist_csv_buf.getvalue(),
+                file_name=f"tuning_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                key="download_tuning_history_csv"
             )
 
         col_hist_1, col_hist_2 = st.columns([2, 1])
@@ -1730,54 +1925,99 @@ with tabs[1]:
             st.session_state['tuning_attempt_counter'] = 0
             st.success("Tuning history cleared.")
 
-        if current_r2 < r2_threshold and not train_blocked:
-            st.caption("Model is below threshold. Run additional tuning attempts and track each result.")
+        if not train_blocked:
+            if current_r2 < r2_threshold:
+                st.caption("Model is below threshold. Run additional tuning attempts and track each result.")
+            else:
+                st.caption("Model already meets threshold, but you can continue retuning for optimization.")
             col_rt_1, col_rt_2, col_rt_3 = st.columns([1.2, 1.2, 1.4])
             retune_iter_scale = col_rt_1.slider(
                 "Retune Search Intensity",
-                min_value=1.0,
-                max_value=3.0,
+                min_value=0.5,
+                max_value=4.0,
                 value=1.0,
                 step=0.25,
                 key="retune_iter_scale",
-                help="Scales randomized-search iteration budget for tunable models."
+                help="Scales randomized-search iteration budget for tunable models. Higher is slower and can overfit CV noise."
             )
             retune_resplit = col_rt_2.checkbox(
                 "Reshuffle Train/Test Split",
-                value=True,
+                value=False,
                 key="retune_resplit",
-                help="Uses a new split seed for each retune attempt."
+                help="Uses a new split seed for each retune attempt. Keep OFF for stable retune comparisons."
             )
             retune_outlier = col_rt_3.checkbox(
                 "Apply Outlier Removal in Retune",
                 value=remove_outliers,
                 key="retune_use_outlier"
             )
+            st.caption(
+                "How to read outcomes: `threshold_passed` checks candidate R2 on the retune split; "
+                "`promoted` checks whether candidate beat the incumbent on fixed guard holdout."
+            )
 
-            if st.button("Run Additional Tuning Attempt", key="retune_attempt_btn", type="secondary"):
-                try:
-                    st.session_state['quote_generated'] = False
-                    retune_seed = int(st.session_state.get('tuning_attempt_counter', 0)) + 43
-                    split_seed = retune_seed if retune_resplit else 42
+            # Model-aware effective search intensity (prevents misleading settings)
+            retune_iter_scale_effective = float(retune_iter_scale)
+            if model_choice in ["ridge", "linear"]:
+                retune_iter_scale_effective = 1.0
+                st.caption("Search intensity has minimal effect for Linear/Ridge; using effective intensity = 1.0.")
+            elif retune_iter_scale > 3.0:
+                st.caption("High search intensity selected: runtime will increase and gains may be noisy.")
 
-                    # Rebuild split for retune attempt
-                    sample_weight_rt = np.where(y > y.quantile(0.75), 1.5, 1.0)
-                    X_train_rt, X_test_rt, y_train_rt, y_test_rt, w_train_rt, _, split_mode_rt = split_regression_best_practice(
-                        X, y, sample_weight=sample_weight_rt, split_mode=requested_split_mode, test_size=0.2, random_state=split_seed
-                    )
+            auto_max_attempts = st.number_input(
+                "Auto-Retune Max Attempts",
+                min_value=2,
+                max_value=20,
+                value=5,
+                step=1,
+                key="auto_retune_max_attempts",
+                help="Auto-retune stops early if a candidate is promoted."
+            )
 
-                    retune_result = run_regression_training_attempt(
-                        X_train_rt, y_train_rt, X_test_rt, y_test_rt,
-                        model_choice=model_choice,
-                        num_features=selected_num_features,
-                        cat_features=CAT_FEATURES,
-                        use_log_target=use_log_target,
-                        remove_outliers=retune_outlier,
-                        outlier_count=outlier_count,
-                        outlier_sample_weight=w_train_rt,
-                        random_state=retune_seed,
-                        n_iter_scale=retune_iter_scale
-                    )
+            def _run_one_retune_attempt():
+                retune_seed = int(st.session_state.get('tuning_attempt_counter', 0)) + 43
+                split_seed = retune_seed if retune_resplit else 42
+
+                sample_weight_rt = np.where(y > y.quantile(0.75), 1.5, 1.0)
+                X_train_rt, X_test_rt, y_train_rt, y_test_rt, w_train_rt, _, split_mode_rt = split_regression_best_practice(
+                    X, y, sample_weight=sample_weight_rt, split_mode=requested_split_mode, test_size=0.2, random_state=split_seed
+                )
+                if retune_outlier and (len(X_train_rt) - int(outlier_count) < 10):
+                    return {
+                        "ran": False,
+                        "promoted": False,
+                        "message": (
+                            f"Retune skipped: outlier removal would leave fewer than 10 training rows "
+                            f"({len(X_train_rt)} - {int(outlier_count)}). Reduce outliers or disable outlier removal."
+                        ),
+                    }
+
+                incumbent_model = st.session_state.get('models')
+                retune_result = run_regression_training_attempt(
+                    X_train_rt, y_train_rt, X_test_rt, y_test_rt,
+                    model_choice=model_choice,
+                    num_features=selected_num_features,
+                    cat_features=CAT_FEATURES,
+                    use_log_target=use_log_target,
+                    remove_outliers=retune_outlier,
+                    outlier_count=outlier_count,
+                    outlier_sample_weight=w_train_rt,
+                    random_state=retune_seed,
+                    n_iter_scale=retune_iter_scale_effective
+                )
+                cv_score_rt = retune_result["performance_metric"]
+                mae_rt = retune_result["mae_test"]
+                r2_rt = retune_result["r2_test"]
+                st.session_state['last_retune_r2'] = float(r2_rt)
+                st.session_state['last_retune_mae'] = float(mae_rt)
+                gate = _retune_promotion_gate(
+                    incumbent_model=incumbent_model,
+                    candidate_model=retune_result["tuned_model"],
+                    X_guard=X_test,
+                    y_guard=y_test
+                )
+
+                if gate["promote"]:
                     _store_regression_attempt_result(
                         retune_result,
                         model_name=model_choice,
@@ -1785,31 +2025,86 @@ with tabs[1]:
                         rows_total=(len(X_train_rt) + len(X_test_rt)),
                         y_test_values=y_test_rt
                     )
-                    cv_score_rt = retune_result["performance_metric"]
-                    mae_rt = retune_result["mae_test"]
-                    r2_rt = retune_result["r2_test"]
 
-                    _append_tuning_history(
-                        trigger="retune",
-                        model_name=model_choice,
-                        split_used=split_mode_rt,
-                        cv_score=cv_score_rt,
-                        test_r2_val=r2_rt,
-                        test_mae_val=mae_rt,
-                        train_rows_used=retune_result["train_rows_used"],
-                        test_rows_used=len(X_test_rt),
-                        cv_fold_used=(5 if len(df_modeling) < 500 else 7),
-                        outliers_removed=retune_result["removed_outliers"],
-                        seed_used=retune_seed,
-                        n_iter_scale_used=retune_iter_scale
-                    )
+                _append_tuning_history(
+                    trigger="retune",
+                    model_name=model_choice,
+                    split_used=split_mode_rt,
+                    cv_score=cv_score_rt,
+                    test_r2_val=r2_rt,
+                    test_mae_val=mae_rt,
+                    train_rows_used=retune_result["train_rows_used"],
+                    test_rows_used=len(X_test_rt),
+                    cv_fold_used=(5 if len(df_modeling) < 500 else 7),
+                    outliers_removed=retune_result["removed_outliers"],
+                    seed_used=retune_seed,
+                    n_iter_scale_used=retune_iter_scale_effective,
+                    tuned_model=retune_result["tuned_model"],
+                    promoted=gate["promote"],
+                    promotion_reason=gate["reason"],
+                    guard_r2_incumbent=gate["incumbent_r2"],
+                    guard_r2_candidate=gate["candidate_r2"],
+                    guard_r2_delta=gate["r2_delta"],
+                    guard_mae_incumbent=gate["incumbent_mae"],
+                    guard_mae_candidate=gate["candidate_mae"],
+                    guard_mae_improvement_pct=gate["mae_improvement_pct"]
+                )
 
-                    if r2_rt >= r2_threshold:
-                        st.success(f"Retune succeeded. Test R2 improved to {r2_rt:.3f} and passed threshold {r2_threshold:.3f}.")
+                return {
+                    "ran": True,
+                    "promoted": bool(gate["promote"]),
+                    "r2": float(r2_rt),
+                    "mae": float(mae_rt),
+                    "gate": gate,
+                }
+
+            b1, b2 = st.columns(2)
+            manual_clicked = b1.button("Run Additional Tuning Attempt", key="retune_attempt_btn", type="secondary")
+            auto_clicked = b2.button("Auto-Retune (Until Promoted)", key="auto_retune_btn", type="secondary")
+
+            if manual_clicked:
+                try:
+                    st.session_state['quote_generated'] = False
+                    one = _run_one_retune_attempt()
+                    if not one["ran"]:
+                        st.warning(one["message"])
                     else:
-                        st.warning(f"Retune complete. Test R2 is {r2_rt:.3f}; still below threshold {r2_threshold:.3f}.")
+                        if one["promoted"]:
+                            st.success(one["gate"]["reason"])
+                        else:
+                            st.warning(one["gate"]["reason"])
+                        st.caption(
+                            f"Candidate retune metrics (retune split): R2={one['r2']:.3f}, MAE={one['mae']:.1f}h | "
+                            f"Guard delta: R2 {one['gate']['r2_delta']:+.3f}, MAE {one['gate']['mae_improvement_pct']:.1%}"
+                        )
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Retune error: {e}")
+            if auto_clicked:
+                try:
+                    st.session_state['quote_generated'] = False
+                    promoted = False
+                    attempts_ran = 0
+                    with st.spinner(f"Auto-retuning up to {int(auto_max_attempts)} attempts..."):
+                        for _ in range(int(auto_max_attempts)):
+                            one = _run_one_retune_attempt()
+                            if not one["ran"]:
+                                st.warning(one["message"])
+                                break
+                            attempts_ran += 1
+                            if one["promoted"]:
+                                promoted = True
+                                st.success(
+                                    f"Auto-retune promoted on attempt {attempts_ran}: "
+                                    f"R2={one['r2']:.3f}, MAE={one['mae']:.1f}h."
+                                )
+                                break
+                    if not promoted and attempts_ran > 0:
+                        st.warning(f"Auto-retune finished after {attempts_ran} attempts with no promotion.")
+                    if attempts_ran > 0:
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Auto-retune error: {e}")
 
 # ----------------------------------------------------------------------
 # TAB 3: MODEL EXPLAINABILITY (XAI)
