@@ -1999,7 +1999,7 @@ with tabs[1]:
                 value=5,
                 step=1,
                 key="auto_retune_max_attempts",
-                help="Auto-retune stops early if a candidate is promoted."
+                help="Auto-retune stops early when the candidate passes the R2 threshold."
             )
 
             def _run_one_retune_attempt():
@@ -2081,6 +2081,7 @@ with tabs[1]:
                 return {
                     "ran": True,
                     "promoted": bool(gate["promote"]),
+                    "threshold_passed": bool(r2_rt >= r2_threshold),
                     "r2": float(r2_rt),
                     "mae": float(mae_rt),
                     "gate": gate,
@@ -2088,7 +2089,7 @@ with tabs[1]:
 
             b1, b2 = st.columns(2)
             manual_clicked = b1.button("Run Additional Tuning Attempt", key="retune_attempt_btn", type="secondary")
-            auto_clicked = b2.button("Auto-Retune (Until Promoted)", key="auto_retune_btn", type="secondary")
+            auto_clicked = b2.button("Auto-Retune (Until Threshold Passed)", key="auto_retune_btn", type="secondary")
 
             if manual_clicked:
                 try:
@@ -2111,7 +2112,7 @@ with tabs[1]:
             if auto_clicked:
                 try:
                     st.session_state['quote_generated'] = False
-                    promoted = False
+                    threshold_passed = False
                     attempts_ran = 0
                     with st.spinner(f"Auto-retuning up to {int(auto_max_attempts)} attempts..."):
                         for _ in range(int(auto_max_attempts)):
@@ -2120,15 +2121,15 @@ with tabs[1]:
                                 st.warning(one["message"])
                                 break
                             attempts_ran += 1
-                            if one["promoted"]:
-                                promoted = True
+                            if one["threshold_passed"]:
+                                threshold_passed = True
                                 st.success(
-                                    f"Auto-retune promoted on attempt {attempts_ran}: "
+                                    f"Auto-retune reached threshold on attempt {attempts_ran}: "
                                     f"R2={one['r2']:.3f}, MAE={one['mae']:.1f}h."
                                 )
                                 break
-                    if not promoted and attempts_ran > 0:
-                        st.warning(f"Auto-retune finished after {attempts_ran} attempts with no promotion.")
+                    if not threshold_passed and attempts_ran > 0:
+                        st.warning(f"Auto-retune finished after {attempts_ran} attempts with threshold still not passed.")
                     if attempts_ran > 0:
                         st.rerun()
                 except Exception as e:
