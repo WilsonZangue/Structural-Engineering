@@ -317,6 +317,34 @@ def _extract_model_parameter_rows(reg_model=None, reg_key=None, clf_model=None, 
     return rows
 
 
+def _extract_classifier_hyperparams_df(clf_model, clf_choice):
+    """Return a dataframe of fitted classifier hyperparameters for UI display."""
+    if clf_model is None:
+        return pd.DataFrame(columns=["parameter", "value"])
+
+    clf_est = _get_final_estimator(clf_model)
+    clf_params = clf_est.get_params(deep=False) if hasattr(clf_est, "get_params") else {}
+    clf_type = str(clf_choice or "").strip()
+    rows = []
+
+    if clf_type == "Logistic Regression" or isinstance(clf_est, LogisticRegression):
+        expected = ["C", "class_weight", "solver"]
+        for p in expected:
+            val = clf_params.get(p, None)
+            rows.append({"parameter": p, "value": ("N/A" if val is None else _export_safe_value(val))})
+    elif clf_type == "Gradient Boosting Classifier" or isinstance(clf_est, GradientBoostingClassifier):
+        expected = ["n_estimators", "learning_rate", "max_depth", "subsample"]
+        for p in expected:
+            val = clf_params.get(p, None)
+            rows.append({"parameter": p, "value": ("N/A" if val is None else _export_safe_value(val))})
+
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out["parameter"] = out["parameter"].astype(str)
+        out["value"] = out["value"].astype(str)
+    return out
+
+
 df_modeling = add_interaction_features(df_modeling)
 
 # Calculate training data statistics for drift monitoring
@@ -2171,7 +2199,8 @@ with tabs[2]:
                     max_points = 2000
                     n_rows = sv.shape[0]
                     if n_rows > max_points:
-                        sample_idx = np.random.choice(n_rows, size=max_points, replace=False)
+                        rng = np.random.default_rng(42)
+                        sample_idx = rng.choice(n_rows, size=max_points, replace=False)
                     else:
                         sample_idx = np.arange(n_rows)
 
@@ -2352,7 +2381,8 @@ with tabs[2]:
                     max_points = 3000
                     n_rows = len(x_vals)
                     if n_rows > max_points:
-                        sample_idx = np.random.choice(n_rows, size=max_points, replace=False)
+                        rng = np.random.default_rng(42)
+                        sample_idx = rng.choice(n_rows, size=max_points, replace=False)
                     else:
                         sample_idx = np.arange(n_rows)
 
@@ -2597,9 +2627,41 @@ with tabs[3]:
             st.metric("Precision (Macro)", f"{clf_metrics['precision_macro']:.3f}")
             st.metric("Recall (High)", f"{clf_metrics['recall_high']:.3f}")
             st.metric("F1 (Macro)", f"{clf_metrics['f1_macro']:.3f}")
+            clf_params_df = _extract_classifier_hyperparams_df(
+                st.session_state.get('clf_model'),
+                st.session_state.get('clf_choice_model')
+            )
+            if not clf_params_df.empty:
+                st.caption("Classifier Hyperparameters Used")
+                st.dataframe(clf_params_df, use_container_width=True, hide_index=True)
+                st.markdown(
+                    "**How the classifier is computed (when you click `Train Classifier`):**\n"
+                    "1. Uses `project_complexity_class` (`Low`, `Medium`, `High`) as the target labels.\n"
+                    "2. Splits data into 80% train and 20% test, with stratification when class balance allows.\n"
+                    "3. Preprocesses features with median/constant imputation, scaling for numeric columns, and one-hot encoding for categorical columns.\n"
+                    "4. Applies higher weight to `High` class examples during training to improve detection of high-complexity projects.\n"
+                    "5. Trains selected model:\n"
+                    "`Logistic Regression`: fits directly using the shown hyperparameters.\n"
+                    "`Gradient Boosting Classifier`: runs randomized hyperparameter tuning focused on recall for `High` class, then keeps the best model.\n"
+                    "6. Evaluates on the held-out test set and reports Accuracy, Precision (Macro), Recall (High), F1 (Macro), confusion matrix, and false-positive rate for `High`."
+                )
             if clf_cm is not None:
                 st.caption("Confusion Matrix")
                 st.dataframe(clf_cm, use_container_width=True)
+                try:
+                    fig_cm = px.imshow(
+                        clf_cm.values,
+                        x=clf_cm.columns,
+                        y=clf_cm.index,
+                        text_auto=True,
+                        color_continuous_scale="Blues",
+                        aspect="auto",
+                        title="Confusion Matrix Heatmap"
+                    )
+                    fig_cm.update_layout(xaxis_title="Predicted Class", yaxis_title="True Class")
+                    st.plotly_chart(fig_cm, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Confusion matrix plot unavailable: {e}")
             fpr_high = float(clf_metrics.get('fpr_high', np.nan))
             if pd.notna(fpr_high):
                 if fpr_high < 0.30:
@@ -2621,18 +2683,66 @@ with tabs[3]:
                     Xc_train_tx = preprocessor.transform(Xc_train)
                     if hasattr(Xc_train_tx, "toarray"):
                         Xc_train_tx = Xc_train_tx.toarray()
-                    explainer = shap.TreeExplainer(model)
-                    shap_values = explainer.shap_values(Xc_train_tx)
-                    if isinstance(shap_values, list):
-                        shap_values = shap_values[0]
                     try:
                         feature_names = list(preprocessor.get_feature_names_out())
                     except Exception:
                         feature_names = selected_num_features
-                    fig_sum, ax_sum = plt.subplots(figsize=(10, 6))
-                    shap.summary_plot(shap_values, Xc_train_tx, feature_names=feature_names, show=False)
-                    st.pyplot(fig_sum)
-                    plt.close(fig_sum)
+
+                    try:
+                        # Fast path for binary-compatible TreeSHAP
+                        explainer = shap.TreeExplainer(model)
+                        shap_values = explainer.shap_values(Xc_train_tx)
+                        if isinstance(shap_values, list):
+                            shap_values = shap_values[0]
+                        fig_sum, ax_sum = plt.subplots(figsize=(10, 6))
+                        shap.summary_plot(shap_values, Xc_train_tx, feature_names=feature_names, show=False)
+                        st.pyplot(fig_sum)
+                        plt.close(fig_sum)
+                    except Exception as e_tree:
+                        # Fallback for multiclass sklearn GradientBoostingClassifier
+                        msg = str(e_tree).lower()
+                        if "binary classification" in msg or "only supported for binary" in msg:
+                            st.info(
+                                "TreeSHAP is not available for multiclass GradientBoostingClassifier. "
+                                "Showing model-agnostic SHAP summary for `High` class probability."
+                            )
+                            n_rows = Xc_train_tx.shape[0]
+                            if n_rows < 10:
+                                st.warning("Not enough rows to compute SHAP fallback reliably.")
+                            else:
+                                rng = np.random.default_rng(42)
+                                bg_n = min(80, n_rows)
+                                eval_n = min(200, n_rows)
+                                bg_idx = rng.choice(n_rows, size=bg_n, replace=False)
+                                ev_idx = rng.choice(n_rows, size=eval_n, replace=False)
+                                X_bg = Xc_train_tx[bg_idx]
+                                X_ev = Xc_train_tx[ev_idx]
+
+                                classes = list(getattr(model, "classes_", []))
+                                high_idx = classes.index("High") if "High" in classes else (len(classes) - 1 if classes else 0)
+
+                                def _pred_high(arr):
+                                    arr_np = np.array(arr)
+                                    return model.predict_proba(arr_np)[:, high_idx]
+
+                                explainer_fb = shap.Explainer(_pred_high, X_bg)
+                                shap_exp = explainer_fb(X_ev)
+                                mean_abs = np.mean(np.abs(shap_exp.values), axis=0)
+                                imp_df = pd.DataFrame({
+                                    "Feature": feature_names,
+                                    "Mean |SHAP| (High class)": mean_abs
+                                }).sort_values("Mean |SHAP| (High class)", ascending=False).head(20)
+
+                                fig_fb = px.bar(
+                                    imp_df.sort_values("Mean |SHAP| (High class)", ascending=True),
+                                    x="Mean |SHAP| (High class)",
+                                    y="Feature",
+                                    orientation="h",
+                                    title="SHAP Importance (High Class Probability)"
+                                )
+                                st.plotly_chart(fig_fb, use_container_width=True)
+                        else:
+                            raise
                 except Exception as e:
                     st.warning(f"SHAP classifier plot unavailable: {e}")
 
