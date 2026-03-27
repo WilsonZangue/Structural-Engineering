@@ -870,6 +870,258 @@ with tabs[1]:
         }
         st.session_state['last_train_features'] = selected_features_in
 
+    def _prepare_model_sweep_xy(df, features, target):
+        data = df[features + [target]].dropna().copy()
+        X_ = data[features]
+        y_ = data[target]
+        return X_, y_
+
+    def _run_regression_model_sweep(df_source, features, numeric_features, categorical_features, target, use_log_target_flag):
+        """Build a consistent multi-model comparison table for UI and export."""
+        if target not in df_source.columns or not features:
+            return pd.DataFrame()
+
+        X_bt, y_bt = _prepare_model_sweep_xy(df_source, features, target)
+        if len(X_bt) < 10:
+            return pd.DataFrame()
+
+        usable_num_features = [c for c in numeric_features if c in X_bt.columns]
+        usable_cat_features = [c for c in categorical_features if c in X_bt.columns]
+        if not usable_num_features and not usable_cat_features:
+            return pd.DataFrame()
+
+        reg_registry = get_regression_registry()
+        reg_keys = [k for k, v in reg_registry.items() if v["available"]]
+        reg_labels = {k: reg_registry[k]["label"] for k in reg_keys}
+        splitter = KFold(n_splits=5, shuffle=True, random_state=42)
+
+        results = []
+        for key in reg_keys:
+            try:
+                model = build_model(
+                    "regression",
+                    key,
+                    usable_num_features,
+                    usable_cat_features,
+                    use_log_target=use_log_target_flag,
+                    n_rows=len(X_bt)
+                )
+                cv_r2 = cross_val_score(model, X_bt, y_bt, cv=splitter, scoring="r2")
+                cv_mae = -cross_val_score(model, X_bt, y_bt, cv=splitter, scoring="neg_mean_absolute_error")
+
+                X_train_bt, X_test_bt, y_train_bt, y_test_bt, _, _, _ = split_regression_best_practice(
+                    X_bt, y_bt, sample_weight=None, split_mode="auto", test_size=0.2, random_state=42
+                )
+
+                tuned_model, _ = train_and_tune_model(
+                    X_train_bt,
+                    y_train_bt,
+                    key,
+                    usable_num_features,
+                    usable_cat_features,
+                    use_log_target_flag,
+                    sample_weight=None
+                )
+                preds_bt = tuned_model.predict(X_test_bt)
+                hold_r2 = r2_score(y_test_bt, preds_bt)
+                hold_mae = mean_absolute_error(y_test_bt, preds_bt)
+
+                results.append({
+                    "Model": reg_labels.get(key, key),
+                    "CV R2 (mean)": float(np.mean(cv_r2)),
+                    "CV R2 (std)": float(np.std(cv_r2)),
+                    "CV MAE (mean)": float(np.mean(cv_mae)),
+                    "Holdout R2": float(hold_r2),
+                    "Holdout MAE": float(hold_mae),
+                    "Rows Used": int(len(X_bt))
+                })
+            except Exception as e:
+                results.append({
+                    "Model": reg_labels.get(key, key),
+                    "CV R2 (mean)": np.nan,
+                    "CV R2 (std)": np.nan,
+                    "CV MAE (mean)": np.nan,
+                    "Holdout R2": np.nan,
+                    "Holdout MAE": np.nan,
+                    "Rows Used": int(len(X_bt)),
+                    "Error": str(e)
+                })
+
+        if not results:
+            return pd.DataFrame()
+
+        return pd.DataFrame(results).sort_values(
+            ["Holdout R2", "CV R2 (mean)"], ascending=[False, False], na_position="last"
+        ).reset_index(drop=True)
+
+    def _build_regression_comparison_figure(results_df, excluded_models=None):
+        """Create the export-ready comparison figure for regression models."""
+        required_cols = [
+            "Model",
+            "CV R2 (mean)",
+            "CV R2 (std)",
+            "CV MAE (mean)",
+            "Holdout R2",
+            "Holdout MAE",
+        ]
+        if results_df is None or results_df.empty or any(col not in results_df.columns for col in required_cols):
+            return None
+
+        plot_df = results_df[required_cols].copy()
+        plot_df["Model"] = plot_df["Model"].astype(str)
+        excluded_models = excluded_models or []
+        if excluded_models:
+            exclude_mask = plot_df["Model"].str.lower().apply(
+                lambda name: any(excluded.lower() in name for excluded in excluded_models)
+            )
+            plot_df = plot_df.loc[~exclude_mask].copy()
+        for col in required_cols[1:]:
+            plot_df[col] = pd.to_numeric(plot_df[col], errors="coerce")
+
+        plot_df = plot_df.dropna(subset=["Model", "CV R2 (mean)", "Holdout R2", "CV MAE (mean)", "Holdout MAE"])
+        if plot_df.empty:
+            return None
+
+        plot_df = plot_df.sort_values(["Holdout R2", "CV R2 (mean)"], ascending=[False, False]).reset_index(drop=True)
+        y_pos = np.arange(len(plot_df))
+        bar_height = 0.34
+        fig_height = max(5.5, 1.35 * len(plot_df) + 2.5)
+
+        fig, (ax_r2, ax_mae) = plt.subplots(1, 2, figsize=(16, fig_height), facecolor="white")
+
+        ax_r2.barh(
+            y_pos - bar_height / 2,
+            plot_df["CV R2 (mean)"],
+            height=bar_height,
+            xerr=plot_df["CV R2 (std)"].fillna(0.0),
+            color=DASKAN_GREEN,
+            alpha=0.9,
+            label="CV R2 (mean)",
+            error_kw={"elinewidth": 1.2, "ecolor": "#333333", "capsize": 3},
+        )
+        ax_r2.barh(
+            y_pos + bar_height / 2,
+            plot_df["Holdout R2"],
+            height=bar_height,
+            color="#004c29",
+            alpha=0.85,
+            label="Holdout R2",
+        )
+        ax_r2.set_title("R2 Comparison")
+        ax_r2.set_xlabel("R2")
+        ax_r2.set_yticks(y_pos)
+        ax_r2.set_yticklabels(plot_df["Model"])
+        ax_r2.invert_yaxis()
+        ax_r2.grid(axis="x", alpha=0.25)
+        ax_r2.legend(loc="lower right", frameon=True)
+
+        ax_mae.barh(
+            y_pos - bar_height / 2,
+            plot_df["CV MAE (mean)"],
+            height=bar_height,
+            color="#1abc9c",
+            alpha=0.9,
+            label="CV MAE (mean)",
+        )
+        ax_mae.barh(
+            y_pos + bar_height / 2,
+            plot_df["Holdout MAE"],
+            height=bar_height,
+            color="#3498db",
+            alpha=0.85,
+            label="Holdout MAE",
+        )
+        ax_mae.set_title("MAE Comparison")
+        ax_mae.set_xlabel("MAE (Hours)")
+        ax_mae.set_yticks(y_pos)
+        ax_mae.set_yticklabels(plot_df["Model"])
+        ax_mae.invert_yaxis()
+        ax_mae.grid(axis="x", alpha=0.25)
+        ax_mae.legend(loc="lower right", frameon=True)
+
+        fig.suptitle("Final Regression Model Performance Comparison", fontsize=16, fontweight="bold", y=0.98)
+        fig.tight_layout(rect=[0, 0, 1, 0.95])
+        return fig
+
+    def _build_classifier_shap_importance_df(clf_model, X_train_raw, top_n=20):
+        """Create a consistent SHAP importance table for project complexity classification."""
+        if clf_model is None or X_train_raw is None or len(X_train_raw) < 10:
+            return pd.DataFrame()
+
+        preprocessor = clf_model.named_steps['prep']
+        model = clf_model.named_steps['model']
+        X_train_tx = preprocessor.transform(X_train_raw)
+        if hasattr(X_train_tx, "toarray"):
+            X_train_tx = X_train_tx.toarray()
+
+        try:
+            feature_names = list(preprocessor.get_feature_names_out())
+        except Exception:
+            feature_names = list(X_train_raw.columns)
+
+        try:
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer.shap_values(X_train_tx)
+            if isinstance(shap_values, list):
+                classes = list(getattr(model, "classes_", []))
+                if "High" in classes and len(shap_values) > classes.index("High"):
+                    shap_values = shap_values[classes.index("High")]
+                else:
+                    shap_values = shap_values[0]
+            shap_arr = np.array(shap_values)
+            if shap_arr.ndim == 1:
+                shap_arr = shap_arr.reshape(-1, 1)
+            mean_abs = np.mean(np.abs(shap_arr), axis=0)
+            value_label = "Mean |SHAP|"
+        except Exception as e_tree:
+            msg = str(e_tree).lower()
+            if "binary classification" not in msg and "only supported for binary" not in msg:
+                raise
+
+            n_rows = X_train_tx.shape[0]
+            rng = np.random.default_rng(42)
+            bg_n = min(80, n_rows)
+            eval_n = min(200, n_rows)
+            bg_idx = rng.choice(n_rows, size=bg_n, replace=False)
+            ev_idx = rng.choice(n_rows, size=eval_n, replace=False)
+            X_bg = X_train_tx[bg_idx]
+            X_ev = X_train_tx[ev_idx]
+
+            classes = list(getattr(model, "classes_", []))
+            high_idx = classes.index("High") if "High" in classes else (len(classes) - 1 if classes else 0)
+
+            def _pred_high(arr):
+                arr_np = np.array(arr)
+                return model.predict_proba(arr_np)[:, high_idx]
+
+            explainer_fb = shap.Explainer(_pred_high, X_bg)
+            shap_exp = explainer_fb(X_ev)
+            mean_abs = np.mean(np.abs(shap_exp.values), axis=0)
+            value_label = "Mean |SHAP| (High class)"
+
+        imp_df = pd.DataFrame({
+            "Feature": feature_names,
+            value_label: mean_abs
+        }).sort_values(value_label, ascending=False).head(top_n)
+        return imp_df.reset_index(drop=True)
+
+    def _build_classifier_shap_importance_figure(imp_df):
+        """Render the classifier SHAP importance chart as a matplotlib figure."""
+        if imp_df is None or imp_df.empty or imp_df.shape[1] < 2:
+            return None
+
+        value_col = imp_df.columns[1]
+        plot_df = imp_df.sort_values(value_col, ascending=True)
+        fig_height = max(5.5, 0.45 * len(plot_df) + 2.5)
+        fig, ax = plt.subplots(figsize=(11, fig_height), facecolor="white")
+        ax.barh(plot_df["Feature"], plot_df[value_col], color="#1f77b4", alpha=0.9)
+        ax.set_title("SHAP Feature Influence for Project Complexity Classification")
+        ax.set_xlabel(value_col)
+        ax.set_ylabel("Feature")
+        ax.grid(axis="x", alpha=0.25)
+        fig.tight_layout()
+        return fig
+
     def _retune_promotion_gate(incumbent_model, candidate_model, X_guard, y_guard):
         """
         Promote only when candidate beats incumbent on fixed guard holdout
@@ -1409,6 +1661,23 @@ with tabs[1]:
                 y_test_exp = pd.Series(st.session_state['y_test'])
                 y_pred_exp = pd.Series(st.session_state['y_preds'], index=y_test_exp.index)
                 X_test_exp = X_test.copy()
+                comparison_export_error = None
+                comparison_export_df = st.session_state.get("backtest_results")
+                if comparison_export_df is None or comparison_export_df.empty:
+                    try:
+                        comparison_export_df = _run_regression_model_sweep(
+                            df_source=df_modeling,
+                            features=available_features,
+                            numeric_features=selected_num_features,
+                            categorical_features=CAT_FEATURES,
+                            target=target_col,
+                            use_log_target_flag=use_log_target,
+                        )
+                        if comparison_export_df is not None and not comparison_export_df.empty:
+                            st.session_state["backtest_results"] = comparison_export_df
+                    except Exception as e:
+                        comparison_export_error = e
+
                 if hasattr(model_pipe_for_export, "feature_names_in_"):
                     X_test_exp = X_test_exp.reindex(columns=model_pipe_for_export.feature_names_in_, fill_value=np.nan)
 
@@ -1437,8 +1706,10 @@ with tabs[1]:
                         )
                     if st.session_state.get('tuning_history'):
                         _write_df(zf, "metrics/tuning_history.csv", pd.DataFrame(st.session_state['tuning_history']))
-                    if st.session_state.get('backtest_results') is not None:
-                        _write_df(zf, "metrics/backtest_results.csv", st.session_state['backtest_results'])
+                    if comparison_export_df is not None and not comparison_export_df.empty:
+                        _write_df(zf, "metrics/backtest_results.csv", comparison_export_df)
+                    elif comparison_export_error is not None:
+                        zf.writestr("metrics/backtest_results_error.txt", str(comparison_export_error))
                     if st.session_state.get('clf_metrics') is not None:
                         _write_df(zf, "metrics/classification_metrics.csv", pd.DataFrame([st.session_state['clf_metrics']]))
                     if st.session_state.get('clf_confusion_matrix') is not None:
@@ -1466,6 +1737,8 @@ with tabs[1]:
                     ]
                     if param_rows:
                         summary_lines.append("Included: metrics/model_hyperparameters.csv")
+                    if comparison_export_df is not None and not comparison_export_df.empty:
+                        summary_lines.append("Included: charts/final_regression_model_performance_comparison.png")
                     zf.writestr("README_export.txt", "\n".join(summary_lines))
 
                     # Performance chart: Actual vs Predicted
@@ -1498,6 +1771,14 @@ with tabs[1]:
                     ax3.set_ylabel("Residual (Hours)")
                     ax3.grid(alpha=0.25)
                     _write_fig(zf, "residuals_vs_predicted", fig3)
+
+                    # Final regression model comparison chart
+                    comparison_fig = _build_regression_comparison_figure(
+                        comparison_export_df,
+                        excluded_models=["Random Forest (Extra Trees)", "Extra Trees"],
+                    )
+                    if comparison_fig is not None:
+                        _write_fig(zf, "final_regression_model_performance_comparison", comparison_fig)
 
                     # Top residual outliers table + box plot by outlier project context
                     try:
@@ -1669,6 +1950,38 @@ with tabs[1]:
                     except Exception as e:
                         zf.writestr("metrics/classification_export_error.txt", str(e))
 
+                    # Classification SHAP feature influence chart if available
+                    try:
+                        clf_model_export = st.session_state.get('clf_model')
+                        clf_choice_export = st.session_state.get('clf_choice_model')
+                        if clf_model_export is not None and clf_choice_export == "Gradient Boosting Classifier":
+                            class_export_df = df_modeling[available_features + ['project_complexity_class']].dropna(
+                                subset=['project_complexity_class']
+                            ).copy()
+                            if not class_export_df.empty:
+                                Xc_export = class_export_df[available_features]
+                                yc_export = class_export_df['project_complexity_class']
+                                stratify_export = yc_export if yc_export.nunique(dropna=True) > 1 else None
+                                Xc_train_export, _, _, _ = train_test_split(
+                                    Xc_export, yc_export, test_size=0.2, random_state=42, stratify=stratify_export
+                                )
+                                clf_shap_df = _build_classifier_shap_importance_df(
+                                    clf_model_export,
+                                    Xc_train_export,
+                                    top_n=20
+                                )
+                                if not clf_shap_df.empty:
+                                    _write_df(
+                                        zf,
+                                        "metrics/classification_shap_feature_influence.csv",
+                                        clf_shap_df.set_index("Feature")
+                                    )
+                                    clf_shap_fig = _build_classifier_shap_importance_figure(clf_shap_df)
+                                    if clf_shap_fig is not None:
+                                        _write_fig(zf, "classification_shap_feature_influence", clf_shap_fig)
+                    except Exception as e:
+                        zf.writestr("metrics/classification_shap_export_error.txt", str(e))
+
                 st.download_button(
                     "Download Full Results Package (ZIP)",
                     data=zip_buffer.getvalue(),
@@ -1719,80 +2032,20 @@ with tabs[1]:
     st.subheader("Backtest & Model Sweep")
     st.caption("Runs a backtest across all models using only the imported metadata columns.")
 
-    def _prepare_xy(df, features, target):
-        data = df[features + [target]].dropna().copy()
-        X_ = data[features]
-        y_ = data[target]
-        return X_, y_
-
     if st.button("Run Backtest & Test All Models", key="run_backtest_models", disabled=train_blocked):
         with st.spinner("Running backtest and model sweep..."):
-            reg_registry = get_regression_registry()
-            reg_keys = [k for k, v in reg_registry.items() if v["available"]]
-            reg_labels = {k: reg_registry[k]["label"] for k in reg_keys}
-
-            df_bt = df_modeling.copy()
-
-            X_bt, y_bt = _prepare_xy(df_bt, available_features, target_col)
-            if len(X_bt) < 10:
+            results_df = _run_regression_model_sweep(
+                df_source=df_modeling,
+                features=available_features,
+                numeric_features=selected_num_features,
+                categorical_features=CAT_FEATURES,
+                target=target_col,
+                use_log_target_flag=use_log_target,
+            )
+            if results_df.empty:
                 st.warning("Not enough rows after filtering to run backtest.")
             else:
-                splitter = KFold(n_splits=5, shuffle=True, random_state=42)
-
-                results = []
-                for key in reg_keys:
-                    try:
-                        # Backtest (CV) with untuned model
-                        model = build_model(
-                            "regression",
-                            key,
-                            selected_num_features,
-                            CAT_FEATURES,
-                            use_log_target=use_log_target,
-                            n_rows=len(X_bt)
-                        )
-                        cv_r2 = cross_val_score(model, X_bt, y_bt, cv=splitter, scoring="r2")
-                        cv_mae = -cross_val_score(model, X_bt, y_bt, cv=splitter, scoring="neg_mean_absolute_error")
-
-                        # Holdout test with tuned model
-                        X_train_bt, X_test_bt, y_train_bt, y_test_bt, _, _, _ = split_regression_best_practice(
-                            X_bt, y_bt, sample_weight=None, split_mode="auto", test_size=0.2, random_state=42
-                        )
-
-                        tuned_model, _ = train_and_tune_model(
-                            X_train_bt, y_train_bt, key,
-                            selected_num_features, CAT_FEATURES, use_log_target,
-                            sample_weight=None
-                        )
-                        preds_bt = tuned_model.predict(X_test_bt)
-                        hold_r2 = r2_score(y_test_bt, preds_bt)
-                        hold_mae = mean_absolute_error(y_test_bt, preds_bt)
-
-                        results.append({
-                            "Model": reg_labels.get(key, key),
-                            "CV R2 (mean)": float(np.mean(cv_r2)),
-                            "CV R2 (std)": float(np.std(cv_r2)),
-                            "CV MAE (mean)": float(np.mean(cv_mae)),
-                            "Holdout R2": float(hold_r2),
-                            "Holdout MAE": float(hold_mae),
-                            "Rows Used": int(len(X_bt))
-                        })
-                    except Exception as e:
-                        results.append({
-                            "Model": reg_labels.get(key, key),
-                            "CV R2 (mean)": np.nan,
-                            "CV R2 (std)": np.nan,
-                            "CV MAE (mean)": np.nan,
-                            "Holdout R2": np.nan,
-                            "Holdout MAE": np.nan,
-                            "Rows Used": int(len(X_bt)),
-                            "Error": str(e)
-                        })
-
-                results_df = pd.DataFrame(results)
-                st.session_state["backtest_results"] = results_df.sort_values(
-                    ["Holdout R2", "CV R2 (mean)"], ascending=[False, False]
-                )
+                st.session_state["backtest_results"] = results_df
 
     if st.session_state.get("backtest_results") is not None:
         st.dataframe(
@@ -1800,6 +2053,15 @@ with tabs[1]:
             use_container_width=True,
             hide_index=True
         )
+        comparison_ui_fig = _build_regression_comparison_figure(
+            st.session_state["backtest_results"],
+            excluded_models=["Random Forest (Extra Trees)", "Extra Trees"],
+        )
+        if comparison_ui_fig is not None:
+            st.markdown("### Final Regression Model Performance Comparison")
+            st.caption("Comparison chart shown without the Random Forest (Extra Trees) model.")
+            st.pyplot(comparison_ui_fig, use_container_width=True)
+            plt.close(comparison_ui_fig)
     
     # --- Advanced Error Analysis Visualization ---
     if st.session_state['models'] is not None and st.session_state.get('y_preds') is not None:
@@ -2678,72 +2940,20 @@ with tabs[3]:
         if st.session_state.get('clf_model') is not None and st.session_state.get('clf_choice_model') == "Gradient Boosting Classifier":
             with st.expander("SHAP: Structural Drivers (Classifier)", expanded=False):
                 try:
-                    model_pipe = st.session_state['clf_model']
-                    preprocessor = model_pipe.named_steps['prep']
-                    model = model_pipe.named_steps['model']
-                    Xc_train_tx = preprocessor.transform(Xc_train)
-                    if hasattr(Xc_train_tx, "toarray"):
-                        Xc_train_tx = Xc_train_tx.toarray()
-                    try:
-                        feature_names = list(preprocessor.get_feature_names_out())
-                    except Exception:
-                        feature_names = selected_num_features
-
-                    try:
-                        # Fast path for binary-compatible TreeSHAP
-                        explainer = shap.TreeExplainer(model)
-                        shap_values = explainer.shap_values(Xc_train_tx)
-                        if isinstance(shap_values, list):
-                            shap_values = shap_values[0]
-                        fig_sum, ax_sum = plt.subplots(figsize=(10, 6))
-                        shap.summary_plot(shap_values, Xc_train_tx, feature_names=feature_names, show=False)
-                        st.pyplot(fig_sum)
-                        plt.close(fig_sum)
-                    except Exception as e_tree:
-                        # Fallback for multiclass sklearn GradientBoostingClassifier
-                        msg = str(e_tree).lower()
-                        if "binary classification" in msg or "only supported for binary" in msg:
-                            st.info(
-                                "TreeSHAP is not available for multiclass GradientBoostingClassifier. "
-                                "Showing model-agnostic SHAP summary for `High` class probability."
-                            )
-                            n_rows = Xc_train_tx.shape[0]
-                            if n_rows < 10:
-                                st.warning("Not enough rows to compute SHAP fallback reliably.")
-                            else:
-                                rng = np.random.default_rng(42)
-                                bg_n = min(80, n_rows)
-                                eval_n = min(200, n_rows)
-                                bg_idx = rng.choice(n_rows, size=bg_n, replace=False)
-                                ev_idx = rng.choice(n_rows, size=eval_n, replace=False)
-                                X_bg = Xc_train_tx[bg_idx]
-                                X_ev = Xc_train_tx[ev_idx]
-
-                                classes = list(getattr(model, "classes_", []))
-                                high_idx = classes.index("High") if "High" in classes else (len(classes) - 1 if classes else 0)
-
-                                def _pred_high(arr):
-                                    arr_np = np.array(arr)
-                                    return model.predict_proba(arr_np)[:, high_idx]
-
-                                explainer_fb = shap.Explainer(_pred_high, X_bg)
-                                shap_exp = explainer_fb(X_ev)
-                                mean_abs = np.mean(np.abs(shap_exp.values), axis=0)
-                                imp_df = pd.DataFrame({
-                                    "Feature": feature_names,
-                                    "Mean |SHAP| (High class)": mean_abs
-                                }).sort_values("Mean |SHAP| (High class)", ascending=False).head(20)
-
-                                fig_fb = px.bar(
-                                    imp_df.sort_values("Mean |SHAP| (High class)", ascending=True),
-                                    x="Mean |SHAP| (High class)",
-                                    y="Feature",
-                                    orientation="h",
-                                    title="SHAP Importance (High Class Probability)"
-                                )
-                                st.plotly_chart(fig_fb, use_container_width=True)
-                        else:
-                            raise
+                    clf_shap_df = _build_classifier_shap_importance_df(
+                        st.session_state['clf_model'],
+                        Xc_train,
+                        top_n=20
+                    )
+                    if clf_shap_df.empty:
+                        st.warning("Not enough rows to compute SHAP classifier influence reliably.")
+                    else:
+                        clf_shap_fig = _build_classifier_shap_importance_figure(clf_shap_df)
+                        if clf_shap_fig is not None:
+                            st.markdown("#### SHAP Feature Influence for Project Complexity Classification")
+                            st.pyplot(clf_shap_fig, use_container_width=True)
+                            plt.close(clf_shap_fig)
+                        st.dataframe(clf_shap_df, use_container_width=True, hide_index=True)
                 except Exception as e:
                     st.warning(f"SHAP classifier plot unavailable: {e}")
 
